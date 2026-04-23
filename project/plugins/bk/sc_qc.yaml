@@ -1,0 +1,28 @@
+name: sc_qc
+enabled: true
+required: false
+description: >-
+  Performs standard Quality Control (QC) on single-cell data.
+  It calculates mitochondrial percentage, filters low-quality cells/genes, 
+  normalizes the data, log-transforms it, and selects highly variable genes.
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: The input AnnData object to filter.
+  
+  - name: min_genes
+    type: int
+    required: false
+    description: Minimum number of genes expressed required for a cell to be kept. Default is 200.
+  
+  - name: max_mito
+    type: float
+    required: false
+    description: Maximum fraction of mitochondrial counts allowed (e.g., 0.05 for 5%). Default is 0.05.
+
+returns:
+  - name: summary
+    type: str
+    description: A detailed report of how many cells were removed and the new data shape.

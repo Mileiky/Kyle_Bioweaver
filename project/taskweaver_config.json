@@ -1,0 +1,12 @@
+{
+  "llm.api_base": "http://localhost:11434/v1",
+  "llm.api_key": "ollama",
+  "llm.model": "qwen3.5:122b",
+  "execution_service.kernel_mode": "local",
+  "code_interpreter.python_executable": "/Users/kyleyang/miniconda3/envs/taskweaver/bin/python",
+  "session.roles": ["planner", "code_interpreter", "web_search"],
+  "code_interpreter.allowed_modules": [
+    "pandas", "matplotlib", "numpy", "sklearn", "scipy", "seaborn", "datetime", "typing", "scanpy", "anndata"
+  ],
+  "session.max_internal_chat_round_num": 20
+}

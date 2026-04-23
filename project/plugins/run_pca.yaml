@@ -1,0 +1,32 @@
+name: run_pca
+enabled: true
+required: false
+description: >-
+  Runs PCA on AnnData using Scanpy (sc.tl.pca). Optionally generates PCA diagnostic
+  plots including variance ratio and gene loadings.
+
+examples:
+  adata2 = run_pca(adata, n_comps=50, show_plots=false)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object.
+
+  - name: n_comps
+    type: int
+    required: false
+    default: 50
+    description: Number of principal components to compute.
+
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to generate PCA plots.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData after PCA (results stored in adata.obsm["X_pca"]).

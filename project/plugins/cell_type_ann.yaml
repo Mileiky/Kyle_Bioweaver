@@ -1,0 +1,59 @@
+name: run_cell_type_annotation
+code: cell_type_ann
+enabled: true
+required: false
+description: >-
+  Annotates scRNA-seq clusters with cell-type labels by first identifying top
+  marker genes per cluster using Scanpy and then sending those marker lists to
+  a local or OpenAI-compatible AI model. The predicted labels are written to
+  adata.obs["cell_type"], and annotation metadata is stored in
+  adata.uns["cell_type_annotation"].
+
+examples:
+  adata = run_cell_type_annotation(adata, groupby="leiden_res0.7", model="qwen3.5:122b")
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: >-
+      Input AnnData object. Must contain clustering labels in adata.obs[groupby].
+      For this pipeline, adata.raw should contain log-normalized expression data.
+
+  - name: groupby
+    type: str
+    required: false
+    default: leiden_res0.7
+    description: Column in adata.obs defining the clusters to annotate.
+
+  - name: model
+    type: str
+    required: false
+    default: qwen3.5:122b
+    description: Name of the local or OpenAI-compatible chat model used for annotation.
+
+  - name: api_base
+    type: str
+    required: false
+    default: http://localhost:11434/v1
+    description: Base URL for the OpenAI-compatible API endpoint.
+
+  - name: api_key
+    type: str
+    required: false
+    default: ollama
+    description: API key passed to the endpoint. For local Ollama use, this can be a dummy value.
+
+  - name: n_markers
+    type: int
+    required: false
+    default: 10
+    description: Number of top marker genes per cluster to send to the AI model.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: >-
+      AnnData with predicted cell-type labels stored in adata.obs["cell_type"].
+      Annotation metadata, including cluster markers, returned labels, and model
+      info, is stored in adata.uns["cell_type_annotation"].

@@ -1,0 +1,23 @@
+name: sc_load
+enabled: true
+required: false
+description: >-
+  Loads single-cell data from a file (h5ad, csv, mtx) into an AnnData object.
+  Always use this instead of `scanpy.read`.
+
+examples: |-
+  adata, summary = sc_load("data/pbmc3k.h5ad")
+
+parameters:
+  - name: file_path
+    type: str
+    required: true
+    description: Path to the .h5ad file.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: The loaded AnnData object.
+  - name: summary
+    type: str
+    description: A text summary of the loaded data.

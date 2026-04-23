@@ -1,0 +1,46 @@
+name: find_marker_genes
+enabled: true
+required: false
+description: >-
+  Identifies marker genes per cluster/group using scanpy.tl.rank_genes_groups.
+  By default ranks genes for groups defined by a clustering key (e.g., leiden_res0.7)
+  and restricts testing to highly variable genes via mask_var="highly_variable".
+  Optionally generates rank plots and a heatmap.
+
+examples: 
+  adata2 = find_marker_genes(adata, groupby="leiden_res0.7", method="t-test", n_genes=25, show_plots=false)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object with clustering labels in adata.obs.
+
+  - name: groupby
+    type: str
+    required: false
+    default: leiden_res0.7
+    description: Column in adata.obs defining groups/clusters to compare.
+
+  - name: method
+    type: str
+    required: false
+    default: t-test
+    description: Ranking method for scanpy.tl.rank_genes_groups (e.g., "t-test", "wilcoxon", "logreg").
+
+  - name: n_genes
+    type: int
+    required: false
+    default: 25
+    description: Number of top genes to display in plots.
+
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to display rank_genes_groups plots and heatmap.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData with ranking results stored in adata.uns["rank_genes_groups"].

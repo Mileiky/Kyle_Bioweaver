@@ -1,0 +1,39 @@
+name: normalize_and_hvg
+enabled: true
+required: false
+description: >-
+  Normalizes total counts, log-transforms expression values, and identifies highly
+  variable genes using Scanpy. Stores a copy of AnnData in adata.raw before
+  normalization for downstream differential expression.
+
+examples:
+  adata2 = normalize_and_hvg(adata, n_top_genes=2000, flavor="seurat", show_plots=false)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object.
+
+  - name: n_top_genes
+    type: int
+    required: false
+    default: 2000
+    description: Number of highly variable genes to select.
+
+  - name: flavor
+    type: str
+    required: false
+    default: seurat
+    description: Method used for highly variable gene selection.
+
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to display highly variable gene plots.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData after normalization, log1p, and HVG computation.

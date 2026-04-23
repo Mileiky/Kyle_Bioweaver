@@ -1,0 +1,27 @@
+name: run_scrublet
+enabled: true
+required: false
+description: >-
+  Runs Scanpy's scrublet doublet detection on an AnnData object. Creates
+  doublet scores and predictions in adata.obs. Optionally supports batch-aware
+  scrublet via batch_key.
+
+examples:
+  adata2 = run_scrublet(adata, batch_key="batch")
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object.
+
+  - name: batch_key
+    type: str
+    required: false
+    default: null
+    description: Optional obs column used for batch-aware scrublet.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData with Scrublet results added to adata.obs.

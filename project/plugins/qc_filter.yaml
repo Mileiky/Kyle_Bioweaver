@@ -1,0 +1,45 @@
+name: qc_filter
+enabled: true
+required: false
+description: >-
+  Wraps the user's qc_filter(adata, ...) Scanpy QC filtering function as a TaskWeaver plugin.
+
+examples:
+  adata = qc_filter(adata)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object.
+  - name: min_genes
+    type: int
+    required: false
+    default: 200
+    description: Minimum genes per cell.
+  - name: max_genes
+    type: int
+    required: false
+    default: 2500
+    description: Maximum genes per cell.
+  - name: pct_mt
+    type: float
+    required: false
+    default: 15
+    description: Filter cells with pct_counts_mt < pct_mt. Use null to disable.
+  - name: min_cells
+    type: int
+    required: false
+    default: 3
+    description: Keep genes expressed in at least this many cells.
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to show QC plots using scanpy plotting.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: Filtered AnnData.
+

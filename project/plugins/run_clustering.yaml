@@ -1,0 +1,39 @@
+name: run_clustering
+enabled: true
+required: false
+description: >-
+  Performs graph-based clustering on AnnData using either Leiden or Louvain.
+  Requires a precomputed neighbors graph (run run_umap first).
+  Stores cluster labels in adata.obs under a resolution-specific key.
+
+examples:
+  adata2 = run_clustering(adata, resolution=0.7, method="leiden", show_plots=false)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object with neighbors graph already computed.
+
+  - name: resolution
+    type: float
+    required: false
+    default: 0.7
+    description: Resolution parameter controlling cluster granularity.
+
+  - name: method
+    type: str
+    required: false
+    default: leiden
+    description: Clustering method to use. Options are "leiden" or "louvain".
+
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to display UMAP colored by cluster labels.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData with cluster labels added to adata.obs 

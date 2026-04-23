@@ -1,0 +1,27 @@
+name: scale_data
+enabled: true
+required: false
+description: >-
+  Regresses out total_counts and pct_counts_mt from AnnData and scales the data
+  using scanpy.pp.scale. Intended for preparing data for PCA and downstream
+  clustering.
+
+examples:
+  adata_scaled = scale_data(adata, max_value=10)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object to be regressed and scaled.
+
+  - name: max_value
+    type: int
+    required: false
+    default: 10
+    description: Maximum value to clip scaled data.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData after regression and scaling.

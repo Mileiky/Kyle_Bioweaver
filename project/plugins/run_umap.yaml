@@ -1,0 +1,51 @@
+name: run_umap
+enabled: true
+required: false
+description: >-
+  Computes nearest neighbors and UMAP embedding using Scanpy. Stores the UMAP
+  coordinates in adata.obsm["X_umap"]. Optionally generates UMAP plots for selected
+  marker genes.
+
+examples:
+  adata = run_umap(adata)
+
+parameters:
+  - name: adata
+    type: AnnData
+    required: true
+    description: Input AnnData object.
+
+  - name: n_neighbors
+    type: int
+    required: false
+    default: 15
+    description: Number of neighbors for graph construction.
+
+  - name: min_dist
+    type: float
+    required: false
+    default: 0.1
+    description: Minimum distance parameter for UMAP.
+
+  - name: n_components
+    type: int
+    required: false
+    default: 2
+    description: Number of UMAP dimensions.
+
+  - name: metric
+    type: str
+    required: false
+    default: euclidean
+    description: Distance metric used for neighbor graph.
+
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to display UMAP plots.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData after neighbor graph construction and UMAP embedding.
