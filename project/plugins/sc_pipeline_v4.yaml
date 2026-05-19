@@ -2,54 +2,158 @@ name: sc_pipeline_v4
 enabled: true
 required: false
 description: >-
-  Smart Single-Cell Analysis Pipeline Manager. 
-  Use this skill to load data, perform QC, identify variable genes (HVG), or cluster data.
-  The pipeline is cumulative: selecting a 
-  downstream stage (e.g., 'cluster') automatically executes all preceding 
-  steps (QC, HVG). You should pass upstream parameters (e.g., 'min_genes' 
-  or 'n_top_genes') directly to this single function call rather than 
-  calling steps individually.
-  It uses a smart caching system (DAG), so re-running a step with the same parameters 
-  is instant and does not duplicate computation.
-  Always start by providing a data_path.
-  Example usage: 
-  adata, summary = sc_pipeline_v4(target_stage='cluster', resolution=0.5)
-  
+  Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
+  and run discrete cached analysis steps: raw, qc, normalize, hvg, scale, pca,
+  neighbors, umap, cluster, and markers. Selecting a downstream target_stage
+  automatically executes missing upstream steps. If the user changes parameters
+  for one step, the DAG reuses valid cached ancestors and creates a new branch
+  from the changed step instead of rerunning unaffected work.
+  Always provide data_path on the first run for a dataset. Later calls may omit
+  data_path if exactly one raw dataset is already loaded.
+
+examples:
+  adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
+  adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
+  adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
 
 parameters:
   - name: target_stage
     type: str
     required: true
     description: >-
-      The goal of this execution.
-      Options:
-      - 'qc': Filter cells and calculate metrics.
-      - 'hvg': Normalize and select variable genes.
-      - 'cluster': Run PCA, Neighbors, and Leiden Clustering.
-  
+      Target DAG stage. Options are raw, qc, normalize, hvg, scale, pca,
+      neighbors, umap, cluster, and markers.
+
   - name: data_path
     type: str
     required: false
-    description: >-
-      File path to the .h5ad file. Only required for the FIRST run to initialize the pipeline.
-      Subsequent calls reuse the loaded data.
-  
-  - name: resolution
+    description: Path to the .h5ad file. Required on the first run for a dataset.
+
+  - name: qc_min_genes
+    type: int
+    required: false
+    default: 200
+    description: Minimum genes per cell for QC filtering.
+
+  - name: qc_max_genes
+    type: int
+    required: false
+    default: 2500
+    description: Maximum genes per cell for QC filtering.
+
+  - name: qc_mt_pct
     type: float
     required: false
-    description: Resolution for Leiden clustering (higher = more clusters). Default 0.5. Used only if target is 'cluster'.
-  
+    default: 5
+    description: Maximum mitochondrial percentage for QC filtering. Use null to disable.
+
+  - name: min_cells
+    type: int
+    required: false
+    default: 3
+    description: Minimum cells per gene for QC filtering.
+
+  - name: target_sum
+    type: float
+    required: false
+    default: 10000
+    description: Target total counts for normalize_total before log1p.
+
   - name: n_hvg
     type: int
     required: false
-    description: Number of highly variable genes to select. Default 2000. Used only if target is 'hvg' or 'cluster'.
-  
-  - name: min_genes
+    default: 2000
+    description: Number of highly variable genes to retain.
+
+  - name: hvg_flavor
+    type: str
+    required: false
+    default: seurat
+    description: Scanpy highly_variable_genes flavor.
+
+  - name: max_scale_value
     type: int
     required: false
-    description: Minimum genes per cell for QC filtering. Default 200. Used only if target is 'qc'.
+    default: 10
+    description: Maximum clipped value for scanpy.pp.scale.
+
+  - name: regress_out
+    type: bool
+    required: false
+    default: true
+    description: Whether to regress out total_counts and pct_counts_mt before scaling.
+
+  - name: n_comps
+    type: int
+    required: false
+    default: 50
+    description: Number of principal components to compute.
+
+  - name: n_neighbors
+    type: int
+    required: false
+    default: 10
+    description: Number of neighbors for graph construction.
+
+  - name: n_pcs
+    type: int
+    required: false
+    default: 40
+    description: Number of PCs used for neighbor graph construction.
+
+  - name: use_rep
+    type: str
+    required: false
+    default: X_pca
+    description: Representation in adata.obsm used for neighbor graph construction.
+
+  - name: min_dist
+    type: float
+    required: false
+    default: 0.5
+    description: Minimum distance parameter for UMAP.
+
+  - name: spread
+    type: float
+    required: false
+    default: 1.0
+    description: Spread parameter for UMAP.
+
+  - name: resolution
+    type: float
+    required: false
+    default: 0.5
+    description: Resolution for Leiden or Louvain clustering.
+
+  - name: cluster_method
+    type: str
+    required: false
+    default: leiden
+    description: Clustering method. Options are leiden and louvain.
+
+  - name: groupby
+    type: str
+    required: false
+    default: null
+    description: Cluster/group key for marker detection. Defaults to the active cluster key.
+
+  - name: marker_method
+    type: str
+    required: false
+    default: wilcoxon
+    description: Scanpy rank_genes_groups method for marker detection.
+
+  - name: n_marker_genes
+    type: int
+    required: false
+    default: 25
+    description: Number of marker genes to rank per group.
 
 returns:
+  - name: adata
+    type: AnnData
+    description: AnnData object for the active DAG node.
+
   - name: summary
     type: str
-    description: A status report including the data shape, active state ID, and references to generated plots.
+    description: Status report including active node, data shape, result key, and DAG size.
