@@ -1,4 +1,5 @@
 import io
+import os
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -106,7 +107,10 @@ class SingleCellPipeline(Plugin):
                 start_node_id = mgr.hash_index[target_raw_hash]
             elif data_path:
                 self.ctx.log("info", "sc_pipeline", f"Loading data from {data_path}.")
-                adata = sc.read(data_path)
+                try:
+                    adata = self._read_input_data(data_path)
+                except Exception as exc:
+                    return f"Failed to load data from '{data_path}': {exc}"
                 start_node_id = register_raw(mgr, adata, data_path)
             else:
                 return "No data found and no valid parent state exists. Provide data_path."
@@ -122,6 +126,11 @@ class SingleCellPipeline(Plugin):
             return f"Pipeline failed: {exc}"
 
         return self._visualize_result(mgr, final_node_id, target_stage)
+
+    def _read_input_data(self, data_path):
+        if os.path.isdir(data_path):
+            return sc.read_10x_mtx(data_path, var_names="gene_symbols", cache=False)
+        return sc.read(data_path)
 
     def _visualize_result(self, mgr, node_id, stage):
         adata = mgr.get_object(node_id)
@@ -226,14 +235,24 @@ class SingleCellPipeline(Plugin):
 
         nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=8)
         plt.axis("off")
-        dag_buf = io.StringIO()
-        plt.savefig(dag_buf, format="svg", bbox_inches="tight")
+        svg_buf = io.StringIO()
+        png_buf = io.BytesIO()
+        plt.savefig(svg_buf, format="svg", bbox_inches="tight")
+        plt.savefig(png_buf, format="png", bbox_inches="tight", dpi=160)
         plt.close()
 
         self.ctx.add_artifact(
             name="Pipeline_State",
             file_name=f"result_pipeline_dag_{current_node}.svg",
             type="svg",
-            val=dag_buf.getvalue(),
+            val=svg_buf.getvalue(),
             desc="Current pipeline DAG.",
         )
+        _, png_path = self.ctx.create_artifact_path(
+            name="Pipeline_State_Preview",
+            file_name=f"result_pipeline_dag_{current_node}.png",
+            type="image",
+            desc="Preview image of the current pipeline DAG.",
+        )
+        with open(png_path, "wb") as f:
+            f.write(png_buf.getvalue())

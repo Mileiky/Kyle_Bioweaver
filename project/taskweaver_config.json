@@ -1,7 +1,11 @@
 {
-  "llm.api_base": "http://localhost:11434/v1",
+  "llm.api_base": "http://localhost:11434",
   "llm.api_key": "ollama",
-  "llm.model": "qwen3.5:122b",
+  "llm.api_type": "ollama",
+  "llm.model": "gemma4:26b",
+  "llm.response_format": "text",
+  "llm.max_tokens": 2048,
+  "llm.temperature": 0,
   "execution_service.kernel_mode": "local",
   "code_interpreter.python_executable": "/Users/kyleyang/miniconda3/envs/taskweaver/bin/python",
   "session.roles": ["planner", "code_interpreter", "web_search"],

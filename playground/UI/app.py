@@ -104,7 +104,7 @@ def file_display(files: List[Tuple[str, str]], session_cwd_path: str):
     elements: List[cl.Element] = []
     for file_name, file_path in files:
         # if image, no need to display as another file
-        if file_path.endswith((".png", ".jpg", ".jpeg", ".gif")):
+        if file_path.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg")):
             image = cl.Image(
                 name=file_path,
                 display="inline",

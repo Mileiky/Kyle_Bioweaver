@@ -47,9 +47,39 @@ def _file_fingerprint(path):
 
     abs_path = os.path.abspath(path)
     try:
+        if os.path.isdir(abs_path):
+            file_names = [
+                "matrix.mtx",
+                "matrix.mtx.gz",
+                "genes.tsv",
+                "genes.tsv.gz",
+                "features.tsv",
+                "features.tsv.gz",
+                "barcodes.tsv",
+                "barcodes.tsv.gz",
+            ]
+            files = []
+            for file_name in file_names:
+                file_path = os.path.join(abs_path, file_name)
+                if os.path.exists(file_path):
+                    file_stat = os.stat(file_path)
+                    files.append(
+                        {
+                            "name": file_name,
+                            "size": file_stat.st_size,
+                            "mtime_ns": file_stat.st_mtime_ns,
+                        },
+                    )
+            return {
+                "path": abs_path,
+                "kind": "directory",
+                "files": files,
+            }
+
         stat = os.stat(abs_path)
         identity = {
             "path": abs_path,
+            "kind": "file",
             "size": stat.st_size,
             "mtime_ns": stat.st_mtime_ns,
         }
