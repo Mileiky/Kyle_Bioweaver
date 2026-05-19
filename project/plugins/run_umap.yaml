@@ -18,26 +18,32 @@ parameters:
   - name: n_neighbors
     type: int
     required: false
-    default: 15
+    default: 10
     description: Number of neighbors for graph construction.
 
   - name: min_dist
     type: float
     required: false
-    default: 0.1
+    default: 0.5
     description: Minimum distance parameter for UMAP.
 
-  - name: n_components
+  - name: spread
+    type: float
+    required: false
+    default: 1.0
+    description: Spread parameter for UMAP.
+
+  - name: n_pcs
     type: int
     required: false
-    default: 2
-    description: Number of UMAP dimensions.
+    default: 40
+    description: Number of principal components to use for neighbor graph construction.
 
-  - name: metric
+  - name: use_rep
     type: str
     required: false
-    default: euclidean
-    description: Distance metric used for neighbor graph.
+    default: X_pca
+    description: Representation in adata.obsm used for neighbor graph construction.
 
   - name: show_plots
     type: bool

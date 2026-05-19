@@ -24,20 +24,21 @@ class cell_type_ann(Plugin):
             )
 
         result_key = f"markers_{groupby}"
+        marker_adata = adata.raw.to_adata()[:, adata.var_names].copy()
+        marker_adata.obs = adata.obs.copy()
 
         # Find marker genes from raw log-normalized data
         sc.tl.rank_genes_groups(
-            adata,
+            marker_adata,
             groupby=groupby,
             method="wilcoxon",
             n_genes=n_markers,
             key_added=result_key,
-            use_raw=True,
-            mask_var="highly_variable",
+            use_raw=False,
         )
 
         markers = sc.get.rank_genes_groups_df(
-            adata,
+            marker_adata,
             group=None,
             key=result_key,
         )
