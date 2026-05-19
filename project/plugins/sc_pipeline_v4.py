@@ -164,17 +164,18 @@ class SingleCellPipeline(Plugin):
             plt.text(0.5, 0.5, f"{stage} complete\nshape={adata.shape}", ha="center")
 
         plt.title(f"{stage.upper()} Result (Node: {node_id})")
-        bio_buf = io.StringIO()
-        plt.savefig(bio_buf, format="svg", bbox_inches="tight")
+        bio_buf = io.BytesIO()
+        plt.savefig(bio_buf, format="png", bbox_inches="tight", dpi=160)
         plt.close()
 
-        self.ctx.add_artifact(
+        _, bio_path = self.ctx.create_artifact_path(
             name="Analysis_Result",
-            file_name=f"result_{node_id}.svg",
-            type="svg",
-            val=bio_buf.getvalue(),
+            file_name=f"result_{node_id}.png",
+            type="image",
             desc=f"Plot for {stage}.",
         )
+        with open(bio_path, "wb") as f:
+            f.write(bio_buf.getvalue())
 
         self._plot_dag(mgr, node_id)
         return mgr.get_object(node_id), self._summary(mgr, node_id, stage)
@@ -235,24 +236,15 @@ class SingleCellPipeline(Plugin):
 
         nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=8)
         plt.axis("off")
-        svg_buf = io.StringIO()
         png_buf = io.BytesIO()
-        plt.savefig(svg_buf, format="svg", bbox_inches="tight")
         plt.savefig(png_buf, format="png", bbox_inches="tight", dpi=160)
         plt.close()
 
-        self.ctx.add_artifact(
-            name="Pipeline_State",
-            file_name=f"result_pipeline_dag_{current_node}.svg",
-            type="svg",
-            val=svg_buf.getvalue(),
-            desc="Current pipeline DAG.",
-        )
         _, png_path = self.ctx.create_artifact_path(
-            name="Pipeline_State_Preview",
+            name="Pipeline_State",
             file_name=f"result_pipeline_dag_{current_node}.png",
             type="image",
-            desc="Preview image of the current pipeline DAG.",
+            desc="Current pipeline DAG.",
         )
         with open(png_path, "wb") as f:
             f.write(png_buf.getvalue())
