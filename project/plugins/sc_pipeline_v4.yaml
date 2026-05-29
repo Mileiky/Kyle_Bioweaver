@@ -4,10 +4,13 @@ required: false
 description: >-
   Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
   and run discrete cached analysis steps: raw, qc, normalize, hvg, scale, pca,
-  neighbors, umap, cluster, and markers. Selecting a downstream target_stage
-  automatically executes missing upstream steps. If the user changes parameters
-  for one step, the DAG reuses valid cached ancestors and creates a new branch
-  from the changed step instead of rerunning unaffected work.
+  neighbors, umap, cluster, markers, and annotation. Selecting a downstream
+  target_stage automatically executes missing upstream steps. If the user
+  changes parameters for one step, the DAG reuses valid cached ancestors and
+  creates a new branch from the changed step instead of rerunning unaffected
+  work. The annotation stage labels clusters in adata.obs["cell_type"] and
+  stores metadata in adata.uns["cell_type_annotation"] using an
+  OpenAI-compatible chat endpoint.
   Always provide data_path on the first run for a dataset. Later calls may omit
   data_path if exactly one raw dataset is already loaded.
 
@@ -15,6 +18,8 @@ examples:
   adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
   adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
+  adata, summary = sc_pipeline_v4(target_stage="annotation", resolution=0.8, n_markers=10)
+  adata, summary = sc_pipeline_v4(target_stage="cluster", min_genes=200, n_top_genes=2000, method="leiden")
 
 parameters:
   - name: target_stage
@@ -22,7 +27,8 @@ parameters:
     required: true
     description: >-
       Target DAG stage. Options are raw, qc, normalize, hvg, scale, pca,
-      neighbors, umap, cluster, and markers.
+      neighbors, umap, cluster, markers, and annotation. Aliases
+      cell_type, cell_type_annotation, and annotate also run annotation.
 
   - name: data_path
     type: str
@@ -148,6 +154,84 @@ parameters:
     required: false
     default: 25
     description: Number of marker genes to rank per group.
+
+  - name: model
+    type: str
+    required: false
+    default: qwen3.5:122b
+    description: Name of the local or OpenAI-compatible chat model used for annotation.
+
+  - name: api_base
+    type: str
+    required: false
+    default: http://localhost:11434/v1
+    description: Base URL for the OpenAI-compatible API endpoint used by annotation.
+
+  - name: api_key
+    type: str
+    required: false
+    default: ollama
+    description: API key passed to the annotation endpoint. For local Ollama use, this can be a dummy value.
+
+  - name: n_markers
+    type: int
+    required: false
+    default: 10
+    description: Number of top marker genes per cluster to send to the annotation model.
+
+  - name: show_plots
+    type: bool
+    required: false
+    default: false
+    description: Whether to display Scanpy plots while also saving plugin artifacts.
+
+  - name: min_genes
+    type: int
+    required: false
+    default: null
+    description: Alias for qc_min_genes, matching the qc_filter plugin.
+
+  - name: max_genes
+    type: int
+    required: false
+    default: null
+    description: Alias for qc_max_genes, matching the qc_filter plugin.
+
+  - name: pct_mt
+    type: float
+    required: false
+    default: null
+    description: Alias for qc_mt_pct, matching the qc_filter plugin.
+
+  - name: n_top_genes
+    type: int
+    required: false
+    default: null
+    description: Alias for n_hvg, matching the normalize_and_hvg plugin.
+
+  - name: flavor
+    type: str
+    required: false
+    default: null
+    description: Alias for hvg_flavor, matching the normalize_and_hvg plugin.
+
+  - name: max_value
+    type: int
+    required: false
+    default: null
+    description: Alias for max_scale_value, matching the scale_data plugin.
+
+  - name: method
+    type: str
+    required: false
+    default: null
+    description: Alias for cluster_method except on markers targets, where it aliases marker_method.
+
+  - name: n_genes
+    type: int
+    required: false
+    default: null
+    description: Alias for n_marker_genes, matching the find_marker_genes plugin.
 
 returns:
   - name: adata

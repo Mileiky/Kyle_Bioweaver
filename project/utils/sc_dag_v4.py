@@ -5,12 +5,15 @@ import os
 import uuid
 
 import networkx as nx
+import requests
 import scanpy as sc
 
 
 DEFAULT_STORAGE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "workspace", "sc_dag_v4")
 )
+
+SENSITIVE_PARAM_KEYS = {"api_key"}
 
 
 class Rule:
@@ -101,7 +104,11 @@ def compute_step_hash(mgr, rule_name, parent_hash, all_params):
         }
     else:
         rule = mgr.registry.get(rule_name)
-        relevant_params = {k: v for k, v in all_params.items() if k in rule.param_keys}
+        relevant_params = {
+            k: v
+            for k, v in all_params.items()
+            if k in rule.param_keys and k not in SENSITIVE_PARAM_KEYS
+        }
         data = {
             "parent_hash": parent_hash,
             "rule": rule_name,
@@ -300,13 +307,14 @@ def run_rule(mgr, rule_name, parent_id, **params):
 
     rule = mgr.registry.get(rule_name)
     rule_params = {k: v for k, v in params.items() if k in rule.param_keys}
+    saved_params = {k: v for k, v in rule_params.items() if k not in SENSITIVE_PARAM_KEYS}
     result = rule.func(mgr, parent_id, **rule_params)
 
     if result[1] == "new_object":
         result_key = result[2] if len(result) > 2 else None
-        return mgr.register_new_object(result[0], parent_id, rule_name, rule_params, hash_val, result_key)
+        return mgr.register_new_object(result[0], parent_id, rule_name, saved_params, hash_val, result_key)
     if result[1] == "virtual":
-        return mgr.register_virtual_node(result[0], parent_id, rule_name, rule_params, result[2], hash_val)
+        return mgr.register_virtual_node(result[0], parent_id, rule_name, saved_params, result[2], hash_val)
 
     raise ValueError(f"Unknown rule result type: {result[1]}")
 
@@ -437,6 +445,92 @@ def markers_rule(mgr, parent_id, groupby=None, marker_method="wilcoxon", n_marke
     return adata, "new_object", result_key
 
 
+def annotation_rule(
+    mgr,
+    parent_id,
+    groupby=None,
+    model="qwen3.5:122b",
+    api_base="http://localhost:11434/v1",
+    api_key="ollama",
+    n_markers=10,
+):
+    adata = mgr.get_object(parent_id).copy()
+    if groupby is None:
+        groupby = mgr.graph.nodes[parent_id].get("result_key")
+    if groupby is None or groupby not in adata.obs:
+        raise ValueError("A valid groupby key is required for cell type annotation.")
+
+    if adata.raw is None:
+        raise ValueError("adata.raw is None. Save log-normalized data to adata.raw before scaling.")
+
+    result_key = f"markers_{groupby}"
+    marker_adata = adata.raw.to_adata()[:, adata.var_names].copy()
+    marker_adata.obs = adata.obs.copy()
+
+    sc.tl.rank_genes_groups(
+        marker_adata,
+        groupby=groupby,
+        method="wilcoxon",
+        n_genes=n_markers,
+        key_added=result_key,
+        use_raw=False,
+    )
+
+    markers = sc.get.rank_genes_groups_df(marker_adata, group=None, key=result_key)
+    cluster_markers = {}
+    for cluster in sorted(adata.obs[groupby].astype(str).unique()):
+        genes = (
+            markers[markers["group"].astype(str) == cluster]["names"]
+            .astype(str)
+            .head(n_markers)
+            .tolist()
+        )
+        cluster_markers[cluster] = genes
+
+    prompt = {
+        "task": "Annotate scRNA-seq clusters from marker genes.",
+        "instructions": 'Return JSON only in this format: {"0":"cell type","1":"cell type"}',
+        "clusters": cluster_markers,
+    }
+
+    response = requests.post(
+        f"{api_base.rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": "You are an expert in single-cell RNA-seq cell-type annotation.",
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(prompt),
+                },
+            ],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+
+    annotations = json.loads(response.json()["choices"][0]["message"]["content"])
+    adata.obs["cell_type"] = adata.obs[groupby].astype(str).map(annotations)
+    adata.uns["cell_type_annotation"] = {
+        "groupby": groupby,
+        "model": model,
+        "cluster_markers": cluster_markers,
+        "annotations": annotations,
+        "result_key": result_key,
+    }
+
+    return adata, "new_object", "cell_type"
+
+
 mgr = SCStateManager()
 
 mgr.registry.register(Rule("qc", ["raw"], qc_filter_rule))
@@ -448,6 +542,7 @@ mgr.registry.register(Rule("neighbors", ["pca"], neighbors_rule))
 mgr.registry.register(Rule("umap", ["neighbors"], umap_rule))
 mgr.registry.register(Rule("cluster", ["umap"], cluster_rule, virtual=True))
 mgr.registry.register(Rule("markers", ["cluster"], markers_rule))
+mgr.registry.register(Rule("annotation", ["cluster"], annotation_rule))
 
 
 def get_manager():

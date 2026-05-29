@@ -1,5 +1,6 @@
 import io
 import os
+import textwrap
 
 import matplotlib.pyplot as plt
 import networkx as nx
@@ -35,12 +36,43 @@ class SingleCellPipeline(Plugin):
         groupby: str = None,
         marker_method: str = "wilcoxon",
         n_marker_genes: int = 25,
+        model: str = "qwen3.5:122b",
+        api_base: str = "http://localhost:11434/v1",
+        api_key: str = "ollama",
+        n_markers: int = 10,
+        show_plots: bool = False,
+        min_genes: int = None,
+        max_genes: int = None,
+        pct_mt: float = None,
+        n_top_genes: int = None,
+        flavor: str = None,
+        max_value: int = None,
+        method: str = None,
+        n_genes: int = None,
         **kwargs,
     ):
         mgr = get_manager()
+        target_stage = {
+            "cell_type": "annotation",
+            "cell_type_annotation": "annotation",
+            "annotate": "annotation",
+        }.get(target_stage, target_stage)
         valid_stages = set(mgr.registry.rules.keys()) | {"raw"}
         if target_stage not in valid_stages:
             return f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}"
+
+        qc_min_genes = min_genes if min_genes is not None else qc_min_genes
+        qc_max_genes = max_genes if max_genes is not None else qc_max_genes
+        qc_mt_pct = pct_mt if pct_mt is not None else qc_mt_pct
+        n_hvg = n_top_genes if n_top_genes is not None else n_hvg
+        hvg_flavor = flavor if flavor is not None else hvg_flavor
+        max_scale_value = max_value if max_value is not None else max_scale_value
+        if method is not None:
+            if target_stage == "markers":
+                marker_method = method
+            else:
+                cluster_method = method
+        n_marker_genes = n_genes if n_genes is not None else n_marker_genes
 
         all_params = {
             "data_path": data_path,
@@ -64,6 +96,10 @@ class SingleCellPipeline(Plugin):
             "groupby": groupby,
             "marker_method": marker_method,
             "n_marker_genes": n_marker_genes,
+            "model": model,
+            "api_base": api_base,
+            "api_key": api_key,
+            "n_markers": n_markers,
             **kwargs,
         }
 
@@ -75,7 +111,7 @@ class SingleCellPipeline(Plugin):
 
         if match_type == "exact_match":
             self.ctx.log("info", "sc_pipeline", f"Exact lineage match found: {result_node_id}")
-            return self._visualize_result(mgr, result_node_id, target_stage)
+            return self._visualize_result(mgr, result_node_id, target_stage, show_plots=show_plots)
 
         if match_type == "ambiguous":
             return "Ambiguous request: found multiple partial matches. Specify upstream parameters to clarify."
@@ -125,14 +161,14 @@ class SingleCellPipeline(Plugin):
         except Exception as exc:
             return f"Pipeline failed: {exc}"
 
-        return self._visualize_result(mgr, final_node_id, target_stage)
+        return self._visualize_result(mgr, final_node_id, target_stage, show_plots=show_plots)
 
     def _read_input_data(self, data_path):
         if os.path.isdir(data_path):
             return sc.read_10x_mtx(data_path, var_names="gene_symbols", cache=False)
         return sc.read(data_path)
 
-    def _visualize_result(self, mgr, node_id, stage):
+    def _visualize_result(self, mgr, node_id, stage, show_plots=False):
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
 
@@ -160,12 +196,24 @@ class SingleCellPipeline(Plugin):
                 sc.pl.rank_genes_groups(adata, key=key, n_genes=10, show=False)
             else:
                 plt.text(0.5, 0.5, f"Marker key {key} not found", ha="center")
+        elif stage == "annotation":
+            if "X_umap" in adata.obsm and "cell_type" in adata.obs:
+                sc.pl.umap(adata, color="cell_type", show=False)
+            elif "cell_type" in adata.obs:
+                counts = adata.obs["cell_type"].value_counts(dropna=False)
+                counts.plot(kind="bar", ax=plt.gca())
+                plt.ylabel("Cells")
+                plt.xlabel("Cell type")
+            else:
+                plt.text(0.5, 0.5, "cell_type annotation not found", ha="center")
         else:
             plt.text(0.5, 0.5, f"{stage} complete\nshape={adata.shape}", ha="center")
 
         plt.title(f"{stage.upper()} Result (Node: {node_id})")
         bio_buf = io.BytesIO()
         plt.savefig(bio_buf, format="png", bbox_inches="tight", dpi=160)
+        if show_plots:
+            plt.show()
         plt.close()
 
         _, bio_path = self.ctx.create_artifact_path(
@@ -195,27 +243,49 @@ class SingleCellPipeline(Plugin):
         )
 
     def _plot_dag(self, mgr, current_node):
-        plt.figure(figsize=(9, 6))
-        try:
-            pos = nx.nx_agraph.graphviz_layout(mgr.graph, prog="dot")
-        except ImportError:
-            pos = nx.spring_layout(mgr.graph, seed=42)
+        graph = mgr.graph.copy()
+        for node_id in graph.nodes:
+            graph.nodes[node_id]["rank"] = self._node_rank(mgr, node_id)
 
-        node_colors = ["lightgreen" if n == current_node else "lightblue" for n in mgr.graph.nodes()]
-        nx.draw(
-            mgr.graph,
+        node_count = max(1, graph.number_of_nodes())
+        fig_width = max(10, min(20, 2.0 * len({attr["rank"] for _, attr in graph.nodes(data=True)}) + 6))
+        fig_height = max(5, min(16, node_count * 0.55 + 2))
+        plt.figure(figsize=(fig_width, fig_height))
+        try:
+            agraph = nx.nx_agraph.to_agraph(graph)
+            agraph.graph_attr.update(rankdir="LR", nodesep="0.85", ranksep="1.25", splines="ortho")
+            for node in agraph.nodes():
+                node.attr.update(shape="box", style="rounded,filled", width="1.45", height="0.65", margin="0.08")
+            pos = nx.nx_agraph.graphviz_layout(nx.nx_agraph.from_agraph(agraph), prog="dot")
+        except (ImportError, OSError):
+            pos = nx.multipartite_layout(graph, subset_key="rank", align="vertical", scale=3.5)
+
+        node_colors = ["#9BE7A7" if n == current_node else "#D9ECFF" for n in graph.nodes()]
+        nx.draw_networkx_edges(
+            graph,
             pos,
-            with_labels=False,
-            node_color=node_colors,
             node_size=2200,
-            edge_color="#555555",
+            edge_color="#6B7280",
             arrows=True,
             arrowstyle="-|>",
-            arrowsize=20,
+            arrowsize=16,
+            width=1.4,
+            connectionstyle="arc3,rad=0.04",
+            min_source_margin=12,
+            min_target_margin=16,
+        )
+        nx.draw_networkx_nodes(
+            graph,
+            pos,
+            node_color=node_colors,
+            node_size=1850,
+            edgecolors="#374151",
+            linewidths=1.0,
+            node_shape="s",
         )
 
         labels = {}
-        for node_id, attr in mgr.graph.nodes(data=True):
+        for node_id, attr in graph.nodes(data=True):
             action = attr.get("action", "?")
             params = attr.get("params", {})
             details = ""
@@ -231,11 +301,15 @@ class SingleCellPipeline(Plugin):
                 details = f"\nres={params.get('resolution', '?')}"
             elif action == "markers":
                 details = f"\nn={params.get('n_marker_genes', '?')}"
+            elif action == "annotation":
+                details = f"\nn={params.get('n_markers', '?')}"
 
-            labels[node_id] = f"[{node_id[:4]}]\n{action}{details}"
+            labels[node_id] = self._dag_label(node_id, action, details)
 
-        nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=8)
+        nx.draw_networkx_labels(graph, pos, labels=labels, font_size=7.5, font_family="sans-serif")
+        plt.title("Single-Cell Pipeline DAG", fontsize=12, pad=14)
         plt.axis("off")
+        plt.margins(x=0.12, y=0.16)
         png_buf = io.BytesIO()
         plt.savefig(png_buf, format="png", bbox_inches="tight", dpi=160)
         plt.close()
@@ -248,3 +322,16 @@ class SingleCellPipeline(Plugin):
         )
         with open(png_path, "wb") as f:
             f.write(png_buf.getvalue())
+
+    def _node_rank(self, mgr, node_id):
+        action = mgr.graph.nodes[node_id].get("action")
+        if action == "raw":
+            return 0
+        try:
+            return mgr.dependency_chain(action).index(action)
+        except Exception:
+            return 0
+
+    def _dag_label(self, node_id, action, details):
+        label_action = textwrap.fill(str(action).upper(), width=11)
+        return f"{label_action}\n{node_id[:6]}{details}"
