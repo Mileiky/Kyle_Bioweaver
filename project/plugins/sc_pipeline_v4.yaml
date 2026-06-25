@@ -4,10 +4,14 @@ required: false
 description: >-
   Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
   and run discrete cached analysis steps: raw, scrublet, qc, normalize, hvg,
-  scale, pca, neighbors, umap, cluster, markers, and annotation. Selecting a
-  downstream target_stage automatically executes missing upstream steps. If the user
+  batch_correct, scale, pca, neighbors, umap, cluster, markers, and annotation.
+  Selecting a downstream target_stage automatically executes missing upstream steps. If the user
   changes parameters for one step, the DAG reuses valid cached ancestors and
   creates a new branch from the changed step instead of rerunning unaffected work.
+  Multi-sample runs are supported with data_paths and sample_ids. Samples are
+  concatenated with scanpy/anndata concat, annotated in adata.obs[sample_key],
+  and processed through the same downstream DAG. For multi-sample runs, Scrublet
+  and HVG selection default to using sample_key as their batch key.
   Scrublet doublet detection runs immediately after raw loading and before QC
   because Scanpy recommends raw unnormalized counts for Scrublet. By default it
   stores doublet_score and predicted_doublet in adata.obs without filtering cells;
@@ -28,6 +32,7 @@ description: >-
 
 examples:
   adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
+  adata, summary = sc_pipeline_v4(data_paths=["/data/sample1", "/data/sample2"], sample_ids=["sample1", "sample2"], target_stage="markers")
   adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="scrublet")
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.7)
@@ -39,13 +44,37 @@ parameters:
     type: str
     required: true
     description: >-
-      Target DAG stage. Options are raw, scrublet, qc, normalize, hvg, scale,
-      pca, neighbors, umap, cluster, markers, and annotation.
+      Target DAG stage. Options are raw, scrublet, qc, normalize, hvg,
+      batch_correct, scale, pca, neighbors, umap, cluster, markers, and annotation.
 
   - name: data_path
     type: str
     required: false
     description: Path to the .h5ad file. Required on the first run for a dataset.
+
+  - name: data_paths
+    type: list
+    required: false
+    default: null
+    description: Multiple dataset paths for multi-sample analysis. Use either data_path or data_paths, not both.
+
+  - name: sample_ids
+    type: list
+    required: false
+    default: null
+    description: Sample IDs matching data_paths. Defaults to sample_1, sample_2, etc. if omitted.
+
+  - name: sample_key
+    type: str
+    required: false
+    default: sample
+    description: obs column used to store sample identity for multi-sample analysis.
+
+  - name: multi_sample_join
+    type: str
+    required: false
+    default: inner
+    description: Gene join mode for concatenating samples. Use inner for shared genes or outer for union.
 
   - name: scrublet_batch_key
     type: str
@@ -124,6 +153,24 @@ parameters:
     required: false
     default: seurat
     description: Scanpy highly_variable_genes flavor.
+
+  - name: hvg_batch_key
+    type: str
+    required: false
+    default: null
+    description: Optional batch key for sample-aware HVG selection. Defaults to sample_key for multi-sample runs.
+
+  - name: batch_correction_method
+    type: str
+    required: false
+    default: none
+    description: Optional batch correction method after HVG. Options are none and combat.
+
+  - name: combat_key
+    type: str
+    required: false
+    default: null
+    description: obs column used by ComBat. Defaults to sample_key for multi-sample runs.
 
   - name: max_scale_value
     type: int

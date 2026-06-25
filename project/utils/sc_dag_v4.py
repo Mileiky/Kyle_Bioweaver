@@ -91,15 +91,33 @@ def _file_fingerprint(path):
 
 def compute_step_hash(mgr, rule_name, parent_hash, all_params):
     if rule_name == "raw":
+        data_paths = all_params.get("data_paths")
         data_path = all_params.get("data_path")
-        if not data_path:
-            raw_nodes = [n for n, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
-            if len(raw_nodes) == 1:
-                data_path = mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("data_path")
-        data = {
-            "rule": "raw",
-            "source": _file_fingerprint(data_path),
-        }
+        if data_paths:
+            sample_ids = all_params.get("sample_ids") or [
+                f"sample_{idx + 1}" for idx in range(len(data_paths))
+            ]
+            data = {
+                "rule": "raw",
+                "source": [
+                    {
+                        "sample_id": sample_id,
+                        "fingerprint": _file_fingerprint(path),
+                    }
+                    for path, sample_id in zip(data_paths, sample_ids)
+                ],
+                "sample_key": all_params.get("sample_key"),
+                "join": all_params.get("multi_sample_join"),
+            }
+        else:
+            if not data_path:
+                raw_nodes = [n for n, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
+                if len(raw_nodes) == 1:
+                    data_path = mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("data_path")
+            data = {
+                "rule": "raw",
+                "source": _file_fingerprint(data_path),
+            }
     else:
         rule = mgr.registry.get(rule_name)
         relevant_params = {k: v for k, v in all_params.items() if k in rule.param_keys}
@@ -110,7 +128,6 @@ def compute_step_hash(mgr, rule_name, parent_hash, all_params):
         }
 
     return hashlib.md5(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
-
 
 class SCStateManager:
     def __init__(self, storage_dir=DEFAULT_STORAGE_DIR):
@@ -331,11 +348,12 @@ def ensure(mgr, target, start_state, **params):
     return run_rule(mgr, target, parent_id, **params)
 
 
-def register_raw(mgr, adata, path):
-    hash_val = compute_step_hash(mgr, "raw", "init", {"data_path": path})
+def register_raw(mgr, adata, path, params=None):
+    params = params or {"data_path": path}
+    hash_val = compute_step_hash(mgr, "raw", "init", params)
     if hash_val in mgr.hash_index:
         return mgr.hash_index[hash_val]
-    return mgr.register_new_object(adata, None, "raw", {"data_path": path}, hash_val)
+    return mgr.register_new_object(adata, None, "raw", params, hash_val)
 
 
 def scrublet_rule(
@@ -413,11 +431,46 @@ def normalize_rule(mgr, parent_id, target_sum=1e4):
     return adata, "new_object"
 
 
-def hvg_rule(mgr, parent_id, n_hvg=2000, hvg_flavor="seurat"):
+def hvg_rule(mgr, parent_id, n_hvg=2000, hvg_flavor="seurat", hvg_batch_key=None):
     adata = mgr.get_object(parent_id).copy()
-    sc.pp.highly_variable_genes(adata, n_top_genes=n_hvg, flavor=hvg_flavor)
+    if hvg_batch_key is not None and hvg_batch_key not in adata.obs:
+        raise ValueError(f"hvg_batch_key '{hvg_batch_key}' not found in adata.obs.")
+    sc.pp.highly_variable_genes(
+        adata,
+        n_top_genes=n_hvg,
+        flavor=hvg_flavor,
+        batch_key=hvg_batch_key,
+    )
     adata = adata[:, adata.var["highly_variable"]].copy()
     return adata, "new_object"
+
+
+def batch_correct_rule(
+    mgr,
+    parent_id,
+    batch_correction_method="none",
+    combat_key=None,
+    sample_key="sample",
+):
+    adata = mgr.get_object(parent_id).copy()
+    method = (batch_correction_method or "none").lower()
+
+    if method == "none":
+        adata.uns["batch_correction"] = {"method": "none"}
+        return adata, "new_object", "batch_correction_none"
+
+    if method == "combat":
+        key = combat_key or sample_key
+        if key not in adata.obs:
+            raise ValueError(f"ComBat batch key '{key}' not found in adata.obs.")
+        sc.pp.combat(adata, key=key, inplace=True)
+        adata.uns["batch_correction"] = {
+            "method": "combat",
+            "key": key,
+        }
+        return adata, "new_object", f"combat_{key}"
+
+    raise ValueError("batch_correction_method must be 'none' or 'combat'.")
 
 
 def scale_rule(mgr, parent_id, max_scale_value=10, regress_out=True):
@@ -628,7 +681,8 @@ mgr.registry.register(Rule("scrublet", ["raw"], scrublet_rule))
 mgr.registry.register(Rule("qc", ["scrublet"], qc_filter_rule))
 mgr.registry.register(Rule("normalize", ["qc"], normalize_rule))
 mgr.registry.register(Rule("hvg", ["normalize"], hvg_rule))
-mgr.registry.register(Rule("scale", ["hvg"], scale_rule))
+mgr.registry.register(Rule("batch_correct", ["hvg"], batch_correct_rule))
+mgr.registry.register(Rule("scale", ["batch_correct"], scale_rule))
 mgr.registry.register(Rule("pca", ["scale"], pca_rule))
 mgr.registry.register(Rule("neighbors", ["pca"], neighbors_rule))
 mgr.registry.register(Rule("umap", ["neighbors"], umap_rule))

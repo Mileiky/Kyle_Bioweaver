@@ -1,4 +1,5 @@
 import io
+import json
 import os
 
 import matplotlib.pyplot as plt
@@ -15,6 +16,10 @@ class SingleCellPipeline(Plugin):
         self,
         target_stage: str,
         data_path: str = None,
+        data_paths=None,
+        sample_ids=None,
+        sample_key: str = "sample",
+        multi_sample_join: str = "inner",
         scrublet_batch_key: str = None,
         scrublet_expected_doublet_rate: float = 0.05,
         scrublet_threshold: float = None,
@@ -28,6 +33,9 @@ class SingleCellPipeline(Plugin):
         target_sum: float = 1e4,
         n_hvg: int = 2000,
         hvg_flavor: str = "seurat",
+        hvg_batch_key: str = None,
+        batch_correction_method: str = "none",
+        combat_key: str = None,
         max_scale_value: int = 10,
         regress_out: bool = True,
         n_comps: int = 50,
@@ -48,6 +56,8 @@ class SingleCellPipeline(Plugin):
         **kwargs,
     ):
         mgr = get_manager()
+        data_paths = self._coerce_optional_list(data_paths)
+        sample_ids = self._coerce_optional_list(sample_ids)
 
         if target_stage == "umap" and resolution != 0.5:
             self.ctx.log(
@@ -57,8 +67,34 @@ class SingleCellPipeline(Plugin):
             )
             target_stage = "cluster"
 
-        if data_path is None:
-            data_path = self._infer_active_data_path(mgr)
+        if data_paths:
+            if data_path is not None:
+                return self._error("Specify either data_path or data_paths, not both.")
+            if sample_ids is None:
+                sample_ids = [f"sample_{idx + 1}" for idx in range(len(data_paths))]
+            if len(sample_ids) != len(data_paths):
+                return self._error("sample_ids must have the same length as data_paths.")
+            if scrublet_batch_key is None:
+                scrublet_batch_key = sample_key
+            if hvg_batch_key is None:
+                hvg_batch_key = sample_key
+            if combat_key is None:
+                combat_key = sample_key
+        elif data_path is None:
+            source_params = self._infer_active_source_params(mgr)
+            if source_params:
+                data_path = source_params.get("data_path")
+                data_paths = source_params.get("data_paths")
+                sample_ids = source_params.get("sample_ids")
+                sample_key = source_params.get("sample_key", sample_key)
+                multi_sample_join = source_params.get("multi_sample_join", multi_sample_join)
+            if data_paths:
+                if scrublet_batch_key is None:
+                    scrublet_batch_key = sample_key
+                if hvg_batch_key is None:
+                    hvg_batch_key = sample_key
+                if combat_key is None:
+                    combat_key = sample_key
 
         valid_stages = set(mgr.registry.rules.keys()) | {"raw"}
         if target_stage not in valid_stages:
@@ -66,6 +102,10 @@ class SingleCellPipeline(Plugin):
 
         all_params = {
             "data_path": data_path,
+            "data_paths": data_paths,
+            "sample_ids": sample_ids,
+            "sample_key": sample_key,
+            "multi_sample_join": multi_sample_join,
             "scrublet_batch_key": scrublet_batch_key,
             "scrublet_expected_doublet_rate": scrublet_expected_doublet_rate,
             "scrublet_threshold": scrublet_threshold,
@@ -79,6 +119,9 @@ class SingleCellPipeline(Plugin):
             "target_sum": target_sum,
             "n_hvg": n_hvg,
             "hvg_flavor": hvg_flavor,
+            "hvg_batch_key": hvg_batch_key,
+            "batch_correction_method": batch_correction_method,
+            "combat_key": combat_key,
             "max_scale_value": max_scale_value,
             "regress_out": regress_out,
             "n_comps": n_comps,
@@ -137,6 +180,28 @@ class SingleCellPipeline(Plugin):
 
             if target_raw_hash in mgr.hash_index:
                 start_node_id = mgr.hash_index[target_raw_hash]
+            elif data_paths:
+                self.ctx.log("info", "sc_pipeline", f"Loading {len(data_paths)} samples.")
+                try:
+                    adata = self._read_multi_input_data(
+                        data_paths=data_paths,
+                        sample_ids=sample_ids,
+                        sample_key=sample_key,
+                        join=multi_sample_join,
+                    )
+                except Exception as exc:
+                    return self._error(f"Failed to load multi-sample data: {exc}")
+                start_node_id = register_raw(
+                    mgr,
+                    adata,
+                    None,
+                    params={
+                        "data_paths": data_paths,
+                        "sample_ids": sample_ids,
+                        "sample_key": sample_key,
+                        "multi_sample_join": multi_sample_join,
+                    },
+                )
             elif data_path:
                 self.ctx.log("info", "sc_pipeline", f"Loading data from {data_path}.")
                 try:
@@ -163,30 +228,74 @@ class SingleCellPipeline(Plugin):
         return None, message
 
     def _infer_active_data_path(self, mgr):
+        source_params = self._infer_active_source_params(mgr)
+        return source_params.get("data_path") if source_params else None
+
+    def _infer_active_source_params(self, mgr):
         active_node_id = getattr(mgr, "active_node_id", None)
         if active_node_id in mgr.graph.nodes:
-            data_path = self._data_path_for_lineage(mgr, active_node_id)
-            if data_path:
-                return data_path
+            source_params = self._source_params_for_lineage(mgr, active_node_id)
+            if source_params:
+                return source_params
 
         raw_nodes = [n for n, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
         if len(raw_nodes) == 1:
-            return mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("data_path")
+            return mgr.graph.nodes[raw_nodes[0]].get("params", {})
 
         return None
 
     def _data_path_for_lineage(self, mgr, node_id):
+        source_params = self._source_params_for_lineage(mgr, node_id)
+        return source_params.get("data_path") if source_params else None
+
+    def _source_params_for_lineage(self, mgr, node_id):
         lineage = list(nx.ancestors(mgr.graph, node_id)) + [node_id]
         for lineage_node_id in reversed(lineage):
             node_meta = mgr.graph.nodes[lineage_node_id]
             if node_meta.get("action") == "raw":
-                return node_meta.get("params", {}).get("data_path")
+                return node_meta.get("params", {})
         return None
 
     def _read_input_data(self, data_path):
         if os.path.isdir(data_path):
             return sc.read_10x_mtx(data_path, var_names="gene_symbols", cache=False)
         return sc.read(data_path)
+
+    def _read_multi_input_data(self, data_paths, sample_ids, sample_key, join):
+        adatas = {}
+        for data_path, sample_id in zip(data_paths, sample_ids):
+            adata = self._read_input_data(data_path)
+            adata.var_names_make_unique()
+            adata.obs[sample_key] = sample_id
+            adatas[sample_id] = adata
+
+        combined = sc.concat(
+            adatas,
+            label=sample_key,
+            index_unique="-",
+            join=join,
+            merge="same",
+        )
+        combined.uns["multi_sample"] = {
+            "sample_key": sample_key,
+            "sample_ids": sample_ids,
+            "data_paths": data_paths,
+            "join": join,
+        }
+        return combined
+
+    def _coerce_optional_list(self, value):
+        if value is None:
+            return None
+        if isinstance(value, str):
+            stripped = value.strip()
+            if stripped == "":
+                return None
+            if stripped.startswith("["):
+                return list(json.loads(stripped))
+            separator = ";" if ";" in stripped else ","
+            return [item.strip() for item in stripped.split(separator) if item.strip()]
+        return list(value)
 
     def _visualize_result(self, mgr, node_id, stage):
         mgr.active_node_id = node_id
@@ -214,6 +323,15 @@ class SingleCellPipeline(Plugin):
             sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
         elif stage == "hvg":
             sc.pl.highly_variable_genes(adata, show=False)
+        elif stage == "batch_correct":
+            info = adata.uns.get("batch_correction", {})
+            plt.text(
+                0.5,
+                0.5,
+                f"Batch correction: {info.get('method', 'unknown')}\nshape={adata.shape}",
+                ha="center",
+                va="center",
+            )
         elif stage == "pca":
             n_pcs = min(20, adata.obsm["X_pca"].shape[1])
             sc.pl.pca_variance_ratio(adata, n_pcs=n_pcs, show=False)
@@ -403,6 +521,8 @@ class SingleCellPipeline(Plugin):
                 details = f"\nrate={params.get('scrublet_expected_doublet_rate', '?')}"
             elif action == "hvg":
                 details = f"\ntop={params.get('n_hvg', '?')}"
+            elif action == "batch_correct":
+                details = f"\n{params.get('batch_correction_method', 'none')}"
             elif action == "pca":
                 details = f"\npc={params.get('n_comps', '?')}"
             elif action == "neighbors":
