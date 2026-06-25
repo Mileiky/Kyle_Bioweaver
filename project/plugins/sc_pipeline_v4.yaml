@@ -4,22 +4,28 @@ required: false
 description: >-
   Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
   and run discrete cached analysis steps: raw, qc, normalize, hvg, scale, pca,
-  neighbors, umap, cluster, and markers. Selecting a downstream target_stage
-  automatically executes missing upstream steps. If the user changes parameters
-  for one step, the DAG reuses valid cached ancestors and creates a new branch
-  from the changed step instead of rerunning unaffected work.
+  neighbors, umap, cluster, markers, and annotation. Selecting a downstream
+  target_stage automatically executes missing upstream steps. If the user
+  changes parameters for one step, the DAG reuses valid cached ancestors and
+  creates a new branch from the changed step instead of rerunning unaffected work.
   Resolution controls Leiden/Louvain clustering, not the UMAP embedding itself.
   For requests like "change the UMAP resolution to 0.7", call target_stage="cluster"
   or target_stage="markers" with resolution=0.7 so the final UMAP is colored by
   the updated clusters.
   Always provide data_path on the first run for a dataset. Later calls may omit
   data_path if exactly one raw dataset is already loaded.
+  Cell-type annotation is available as target_stage="annotation". It uses marker
+  genes from the markers stage and sends the top markers for each cluster to a
+  local Ollama/OpenAI-compatible chat-completions model. Predicted labels are
+  stored in adata.obs["cell_type"], with metadata in
+  adata.uns["cell_type_annotation"].
 
 examples:
   adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.7)
   adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
+  adata, summary = sc_pipeline_v4(target_stage="annotation", annotation_model="qwen3.5:122b")
 
 parameters:
   - name: target_stage
@@ -27,7 +33,7 @@ parameters:
     required: true
     description: >-
       Target DAG stage. Options are raw, qc, normalize, hvg, scale, pca,
-      neighbors, umap, cluster, and markers.
+      neighbors, umap, cluster, markers, and annotation.
 
   - name: data_path
     type: str
@@ -153,6 +159,30 @@ parameters:
     required: false
     default: 25
     description: Number of marker genes to rank per group.
+
+  - name: annotation_model
+    type: str
+    required: false
+    default: qwen3.5:122b
+    description: Local Ollama/OpenAI-compatible chat model used for cell-type annotation.
+
+  - name: annotation_api_base
+    type: str
+    required: false
+    default: http://localhost:11434/v1
+    description: Base URL for the local Ollama/OpenAI-compatible chat-completions endpoint.
+
+  - name: annotation_api_key
+    type: str
+    required: false
+    default: ollama
+    description: API key sent to the endpoint. For local Ollama this can be a dummy value.
+
+  - name: n_annotation_markers
+    type: int
+    required: false
+    default: 10
+    description: Number of top marker genes per cluster to send to the annotation model.
 
 returns:
   - name: adata

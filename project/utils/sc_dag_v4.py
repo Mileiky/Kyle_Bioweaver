@@ -5,6 +5,7 @@ import os
 import uuid
 
 import networkx as nx
+import requests
 import scanpy as sc
 
 
@@ -437,6 +438,135 @@ def markers_rule(mgr, parent_id, groupby=None, marker_method="wilcoxon", n_marke
     return adata, "new_object", result_key
 
 
+def _extract_cluster_markers(adata, groupby, marker_key, n_markers):
+    markers = sc.get.rank_genes_groups_df(
+        adata,
+        group=None,
+        key=marker_key,
+    )
+
+    cluster_markers = {}
+    for cluster in sorted(adata.obs[groupby].astype(str).unique()):
+        genes = (
+            markers[markers["group"].astype(str) == cluster]["names"]
+            .astype(str)
+            .head(n_markers)
+            .tolist()
+        )
+        cluster_markers[cluster] = genes
+
+    return cluster_markers
+
+
+def _parse_annotation_response(content):
+    content = content.strip()
+    try:
+        parsed = json.loads(content)
+    except json.JSONDecodeError:
+        start = content.find("{")
+        end = content.rfind("}")
+        if start == -1 or end == -1 or end <= start:
+            raise ValueError(f"Annotation model did not return JSON: {content[:200]}")
+        parsed = json.loads(content[start : end + 1])
+
+    if "annotations" in parsed and isinstance(parsed["annotations"], dict):
+        parsed = parsed["annotations"]
+    if not isinstance(parsed, dict):
+        raise ValueError("Annotation model response must be a JSON object mapping clusters to cell types.")
+
+    return {str(cluster): str(label) for cluster, label in parsed.items()}
+
+
+def annotation_rule(
+    mgr,
+    parent_id,
+    groupby=None,
+    annotation_model="qwen3.5:122b",
+    annotation_api_base="http://localhost:11434/v1",
+    annotation_api_key="ollama",
+    n_annotation_markers=10,
+):
+    adata = mgr.get_object(parent_id).copy()
+    marker_key = mgr.graph.nodes[parent_id].get("result_key")
+
+    if marker_key is None or marker_key not in adata.uns:
+        raise ValueError("A valid markers parent is required for cell-type annotation.")
+
+    if groupby is None:
+        marker_params = mgr.graph.nodes[parent_id].get("params", {})
+        groupby = marker_params.get("groupby")
+        if groupby is None:
+            cluster_parent = next(iter(mgr.graph.predecessors(parent_id)), None)
+            if cluster_parent is not None:
+                groupby = mgr.graph.nodes[cluster_parent].get("result_key")
+
+    if groupby is None or groupby not in adata.obs:
+        raise ValueError("A valid groupby key is required for cell-type annotation.")
+
+    cluster_markers = _extract_cluster_markers(
+        adata,
+        groupby=groupby,
+        marker_key=marker_key,
+        n_markers=n_annotation_markers,
+    )
+
+    prompt = {
+        "task": "Annotate single-cell RNA-seq clusters from marker genes.",
+        "instructions": (
+            "Return JSON only. Use cluster IDs as keys and concise cell-type labels as values. "
+            'Example: {"0":"CD4 T cell","1":"B cell"}.'
+        ),
+        "groupby": groupby,
+        "marker_key": marker_key,
+        "clusters": cluster_markers,
+    }
+
+    response = requests.post(
+        f"{annotation_api_base.rstrip('/')}/chat/completions",
+        headers={
+            "Authorization": f"Bearer {annotation_api_key}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": annotation_model,
+            "messages": [
+                {
+                    "role": "system",
+                    "content": (
+                        "You are an expert in single-cell RNA-seq cell-type annotation. "
+                        "Use canonical marker-gene knowledge to choose the best label for each cluster."
+                    ),
+                },
+                {
+                    "role": "user",
+                    "content": json.dumps(prompt),
+                },
+            ],
+            "temperature": 0,
+            "response_format": {"type": "json_object"},
+        },
+        timeout=120,
+    )
+    response.raise_for_status()
+
+    annotations = _parse_annotation_response(response.json()["choices"][0]["message"]["content"])
+    result_key = f"cell_type_annotation_{groupby}_{annotation_model.replace(':', '_')}_{n_annotation_markers}"
+
+    adata.obs["cell_type"] = adata.obs[groupby].astype(str).map(annotations).fillna("Unknown")
+    adata.uns[result_key] = {
+        "groupby": groupby,
+        "model": annotation_model,
+        "api_base": annotation_api_base,
+        "marker_key": marker_key,
+        "n_markers": n_annotation_markers,
+        "cluster_markers": cluster_markers,
+        "annotations": annotations,
+    }
+    adata.uns["cell_type_annotation"] = adata.uns[result_key]
+
+    return adata, "new_object", result_key
+
+
 mgr = SCStateManager()
 
 mgr.registry.register(Rule("qc", ["raw"], qc_filter_rule))
@@ -448,6 +578,7 @@ mgr.registry.register(Rule("neighbors", ["pca"], neighbors_rule))
 mgr.registry.register(Rule("umap", ["neighbors"], umap_rule))
 mgr.registry.register(Rule("cluster", ["umap"], cluster_rule, virtual=True))
 mgr.registry.register(Rule("markers", ["cluster"], markers_rule))
+mgr.registry.register(Rule("annotation", ["markers"], annotation_rule))
 
 
 def get_manager():

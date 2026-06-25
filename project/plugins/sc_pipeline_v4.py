@@ -35,6 +35,10 @@ class SingleCellPipeline(Plugin):
         groupby: str = None,
         marker_method: str = "wilcoxon",
         n_marker_genes: int = 25,
+        annotation_model: str = "qwen3.5:122b",
+        annotation_api_base: str = "http://localhost:11434/v1",
+        annotation_api_key: str = "ollama",
+        n_annotation_markers: int = 10,
         **kwargs,
     ):
         mgr = get_manager()
@@ -76,6 +80,10 @@ class SingleCellPipeline(Plugin):
             "groupby": groupby,
             "marker_method": marker_method,
             "n_marker_genes": n_marker_genes,
+            "annotation_model": annotation_model,
+            "annotation_api_base": annotation_api_base,
+            "annotation_api_key": annotation_api_key,
+            "n_annotation_markers": n_annotation_markers,
             **kwargs,
         }
 
@@ -197,6 +205,15 @@ class SingleCellPipeline(Plugin):
                 sc.pl.rank_genes_groups(adata, key=key, n_genes=10, show=False)
             else:
                 plt.text(0.5, 0.5, f"Marker key {key} not found", ha="center")
+        elif stage == "annotation":
+            if "X_umap" in adata.obsm and "cell_type" in adata.obs:
+                sc.pl.umap(adata, color="cell_type", show=False)
+            elif "cell_type" in adata.obs:
+                counts = adata.obs["cell_type"].value_counts()
+                counts.plot(kind="barh", ax=plt.gca())
+                plt.xlabel("Cells")
+            else:
+                plt.text(0.5, 0.5, "cell_type annotations not found", ha="center")
         else:
             plt.text(0.5, 0.5, f"{stage} complete\nshape={adata.shape}", ha="center")
 
@@ -260,6 +277,9 @@ class SingleCellPipeline(Plugin):
             if ancestor_key in adata.obs:
                 return ancestor_key
 
+        if "cell_type" in adata.obs:
+            return "cell_type"
+
         for prefix in ("leiden_res", "louvain_res"):
             matching_keys = [key for key in adata.obs.keys() if str(key).startswith(prefix)]
             if matching_keys:
@@ -292,8 +312,8 @@ class SingleCellPipeline(Plugin):
             stage = attr.get("action", "?")
             stage_counts[stage] = stage_counts.get(stage, 0) + 1
 
-        width = max(11, len({x for x, _ in pos.values()}) * 1.55)
-        height = max(5, max(stage_counts.values(), default=1) * 1.15 + 2)
+        width = min(14, max(10, len({x for x, _ in pos.values()}) * 1.05))
+        height = min(7, max(4.5, max(stage_counts.values(), default=1) * 0.9 + 2))
         plt.figure(figsize=(width, height))
 
         active_edges = {
@@ -341,7 +361,7 @@ class SingleCellPipeline(Plugin):
             mgr.graph,
             pos,
             node_color=node_colors,
-            node_size=2600,
+            node_size=1900,
             edgecolors=edgecolors,
             linewidths=linewidths,
         )
@@ -363,11 +383,13 @@ class SingleCellPipeline(Plugin):
                 details = f"\nres={params.get('resolution', '?')}"
             elif action == "markers":
                 details = f"\nn={params.get('n_marker_genes', '?')}"
+            elif action == "annotation":
+                details = f"\nn={params.get('n_annotation_markers', '?')}"
 
             labels[node_id] = f"[{node_id[:4]}]\n{action}{details}"
 
-        nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=8, font_weight="bold")
-        stage_y = max(y for _, y in pos.values()) + 0.7
+        nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=7, font_weight="bold")
+        stage_y = max(y for _, y in pos.values()) + 0.55
         for stage, x in self._stage_columns(mgr).items():
             if any(attr.get("action", "?") == stage for _, attr in mgr.graph.nodes(data=True)):
                 plt.text(
@@ -376,15 +398,18 @@ class SingleCellPipeline(Plugin):
                     stage.upper(),
                     ha="center",
                     va="bottom",
-                    fontsize=9,
+                    fontsize=8,
                     fontweight="bold",
                     color="#334155",
                 )
 
         plt.axis("off")
-        plt.margins(x=0.08, y=0.18)
+        xs = [x for x, _ in pos.values()]
+        ys = [y for _, y in pos.values()]
+        plt.xlim(min(xs) - 0.9, max(xs) + 0.9)
+        plt.ylim(min(ys) - 0.75, stage_y + 0.35)
         png_buf = io.BytesIO()
-        plt.savefig(png_buf, format="png", bbox_inches="tight", dpi=160)
+        plt.savefig(png_buf, format="png", dpi=150)
         plt.close()
 
         _, png_path = self.ctx.create_artifact_path(
@@ -416,12 +441,12 @@ class SingleCellPipeline(Plugin):
             )
             x = stage_columns.get(stage, len(stage_columns))
             for idx, node_id in enumerate(nodes):
-                pos[node_id] = (x, -idx * 1.35)
+                pos[node_id] = (x, -idx * 1.1)
 
         return pos
 
     def _stage_columns(self, mgr):
-        known_order = ["raw"] + list(mgr.dependency_chain("markers")[1:])
+        known_order = ["raw"] + list(mgr.dependency_chain("annotation")[1:])
         seen = set()
         ordered_stages = []
         for stage in known_order:
@@ -437,7 +462,7 @@ class SingleCellPipeline(Plugin):
             },
         )
         ordered_stages.extend(extra_stages)
-        return {stage: idx * 1.7 for idx, stage in enumerate(ordered_stages)}
+        return {stage: idx * 1.25 for idx, stage in enumerate(ordered_stages)}
 
     def _active_lineage(self, mgr, current_node):
         if current_node not in mgr.graph.nodes:
