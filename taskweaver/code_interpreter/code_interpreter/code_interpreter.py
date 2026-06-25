@@ -138,6 +138,43 @@ class CodeInterpreter(Role, Interpreter):
             prompt_log_path,
         )
 
+        has_thought = len(post_proxy.post.get_attachment(type=AttachmentType.thought)) > 0
+        reply_type_attachments = post_proxy.post.get_attachment(type=AttachmentType.reply_type)
+        reply_content_attachments = post_proxy.post.get_attachment(type=AttachmentType.reply_content)
+        reply_type = reply_type_attachments[0].content if reply_type_attachments else None
+        has_complete_response = (
+            has_thought
+            and reply_type in {"python", "text"}
+            and len(reply_content_attachments) > 0
+        )
+
+        if not has_complete_response:
+            self.tracing.set_span_status("ERROR", "Failed to generate code.")
+
+            update_verification(
+                post_proxy,
+                "NONE",
+                "No code verification is performed.",
+            )
+            update_execution(
+                post_proxy,
+                "NONE",
+                "No code is executed due to code generation failure.",
+            )
+            post_proxy.update_message("Failed to generate code.")
+            if self.retry_count < self.config.max_retry_count:
+                error_message = self.generator.format_output_revision_message()
+                post_proxy.update_attachment(
+                    error_message,
+                    AttachmentType.revise_message,
+                )
+                post_proxy.update_send_to("CodeInterpreter")
+                self.retry_count += 1
+            else:
+                self.retry_count = 0
+
+            return post_proxy.end()
+
         if post_proxy.post.message is not None and post_proxy.post.message != "":  # type: ignore
             update_verification(
                 post_proxy,

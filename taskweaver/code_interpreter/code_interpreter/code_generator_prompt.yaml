@@ -26,6 +26,8 @@ content: |-
     ## On {ROLE_NAME}'s response format:
     - The response is a JSON object with the following format:
     {RESPONSE_JSON_SCHEMA}
+    - Every response must include all required fields: `thought`, `reply_type`, and `reply_content`.
+    - Return only the JSON object. Do not return Markdown fences or prose outside the JSON.
 
 response_json_schema: |-
     {
