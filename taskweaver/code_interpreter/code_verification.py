@@ -175,6 +175,35 @@ def separate_magics_and_code(input_code: str) -> Tuple[List[str], str, List[str]
     return magics, python_code_str, package_install_commands
 
 
+def find_repeated_lines(code: str, min_repeats: int = 4) -> List[str]:
+    errors = []
+    previous_line = None
+    repeated_count = 0
+    repeated_start = 0
+
+    for line_number, line in enumerate(code.splitlines(), start=1):
+        normalized_line = line.strip()
+        if not normalized_line or normalized_line.startswith("#"):
+            previous_line = None
+            repeated_count = 0
+            repeated_start = 0
+            continue
+
+        if normalized_line == previous_line:
+            repeated_count += 1
+        else:
+            previous_line = normalized_line
+            repeated_count = 1
+            repeated_start = line_number
+
+        if repeated_count == min_repeats:
+            errors.append(
+                f"Repeated code line from line {repeated_start} to {line_number}: {normalized_line}",
+            )
+
+    return errors
+
+
 def code_snippet_verification(
     code_snippet: str,
     code_verification_on: bool = False,
@@ -191,6 +220,7 @@ def code_snippet_verification(
         magics, python_code, _ = separate_magics_and_code(code_snippet)
         if len(magics) > 0:
             errors.append(f"Magic commands except package install are not allowed. Details: {magics}")
+        errors.extend(find_repeated_lines(python_code))
         tree = ast.parse(python_code)
 
         processed_lines = []

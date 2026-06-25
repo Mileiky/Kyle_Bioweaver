@@ -247,3 +247,31 @@ def test_magic_code():
     print("---->", code_verify_errors)
     assert len(code_verify_errors) == 1
     assert "Magic commands except package install are not allowed" in code_verify_errors[0]
+
+
+def test_repeated_code_line():
+    code_snippet = (
+        "adata\n"
+        "adata\n"
+        "adata\n"
+        "adata\n"
+    )
+    code_verify_errors = code_snippet_verification(
+        code_snippet,
+        code_verification_on=True,
+    )
+    assert len(code_verify_errors) == 1
+    assert "Repeated code line" in code_verify_errors[0]
+
+
+def test_repeated_code_line_allows_short_repetition():
+    code_snippet = (
+        "print('retry')\n"
+        "print('retry')\n"
+        "print('done')\n"
+    )
+    code_verify_errors = code_snippet_verification(
+        code_snippet,
+        code_verification_on=True,
+    )
+    assert len(code_verify_errors) == 0

@@ -130,6 +130,14 @@ instruction_template: |-
   ## Planner's response format
   - Planner must strictly format the response into the following JSON object:
     {response_json_schema}
+  - Return exactly one JSON object and nothing else. Do not use Markdown fences, comments, explanations outside JSON, or multiple JSON objects.
+  - The top-level object must contain exactly one key named `response`.
+  - The `response` object must always include every required key: `plan_reasoning`, `init_plan`, `plan`, `current_plan_step`, `stop`, `send_to`, and `message`.
+  - Do not omit fields when a value seems obvious. Use concise strings such as `None`, `InProcess`, or an empty string only when that is the correct value for the required field.
+  - `send_to` must be exactly `User` or one of the available Worker names. Never set `send_to` to `Planner`.
+  - `stop` must be `InProcess` whenever `send_to` is a Worker. Use another stop reason only when sending the message to `User`.
+  - Escape all newline, quote, and backslash characters inside JSON strings so the whole response is valid JSON.
+  - If the previous response was rejected because of formatting, resend the complete corrected JSON object in one response. Do not apologize or explain outside the JSON.
 
 experience_instruction: |-
   # Experience And Lessons

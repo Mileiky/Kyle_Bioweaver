@@ -26,8 +26,15 @@ content: |-
     ## On {ROLE_NAME}'s response format:
     - The response is a JSON object with the following format:
     {RESPONSE_JSON_SCHEMA}
-    - Every response must include all required fields: `thought`, `reply_type`, and `reply_content`.
-    - Return only the JSON object. Do not return Markdown fences or prose outside the JSON.
+    - Return exactly one JSON object and nothing else. Do not use Markdown fences, comments, explanations outside JSON, or multiple JSON objects.
+    - The top-level object must contain exactly one key named `response`.
+    - The `response` object must always include every required key: `thought`, `reply_type`, and `reply_content`.
+    - Do not omit fields when a value seems obvious. `thought` may be brief, but it must be present.
+    - `reply_type` must be exactly `python` or `text`.
+    - Use `reply_type` = `python` only when `reply_content` is executable Python code. Use `reply_type` = `text` for clarification, refusal, or non-code answers.
+    - If `reply_type` is `python`, `reply_content` must contain only the Python code to execute. Do not wrap it in Markdown fences or add prose.
+    - Escape all newline, quote, and backslash characters inside JSON strings so the whole response is valid JSON.
+    - If the previous response was rejected because of formatting, resend the complete corrected JSON object in one response. Do not apologize or explain outside the JSON.
 
 response_json_schema: |-
     {
@@ -95,6 +102,8 @@ requirements: |-
     - {ROLE_NAME} put all the result variables in the last line of the code.
     - {ROLE_NAME} must not import the plugins and otherwise the code will be failed to execute.
     - {ROLE_NAME} must try to directly import required modules without installing them, and only install the modules if the execution fails. 
+    - If the feedback says the previous message did not follow the output format, fix only the JSON envelope unless the code itself also needs a correction.
+    - When generating Python code, keep imports, plugin calls, and result variables in `reply_content`; keep all reasoning in `thought`.
     {CODE_GENERATION_REQUIREMENTS}
 
 experience_instruction: |-

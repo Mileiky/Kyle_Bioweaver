@@ -38,9 +38,21 @@ class SingleCellPipeline(Plugin):
         **kwargs,
     ):
         mgr = get_manager()
+
+        if target_stage == "umap" and resolution != 0.5:
+            self.ctx.log(
+                "info",
+                "sc_pipeline",
+                "Interpreting target_stage='umap' with a non-default resolution as target_stage='cluster'.",
+            )
+            target_stage = "cluster"
+
+        if data_path is None:
+            data_path = self._infer_active_data_path(mgr)
+
         valid_stages = set(mgr.registry.rules.keys()) | {"raw"}
         if target_stage not in valid_stages:
-            return f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}"
+            return self._error(f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}")
 
         all_params = {
             "data_path": data_path,
@@ -71,14 +83,14 @@ class SingleCellPipeline(Plugin):
         try:
             result_node_id, match_type = mgr.find_node_smart(target_stage, **all_params)
         except ValueError as exc:
-            return str(exc)
+            return self._error(str(exc))
 
         if match_type == "exact_match":
             self.ctx.log("info", "sc_pipeline", f"Exact lineage match found: {result_node_id}")
             return self._visualize_result(mgr, result_node_id, target_stage)
 
         if match_type == "ambiguous":
-            return "Ambiguous request: found multiple partial matches. Specify upstream parameters to clarify."
+            return self._error("Ambiguous request: found multiple partial matches. Specify upstream parameters to clarify.")
 
         self.ctx.log("info", "sc_pipeline", "Locating nearest valid cached ancestor.")
         start_node_id = None
@@ -101,7 +113,7 @@ class SingleCellPipeline(Plugin):
             try:
                 target_raw_hash = compute_step_hash(mgr, "raw", "init", all_params)
             except ValueError as exc:
-                return str(exc)
+                return self._error(str(exc))
 
             if target_raw_hash in mgr.hash_index:
                 start_node_id = mgr.hash_index[target_raw_hash]
@@ -110,10 +122,10 @@ class SingleCellPipeline(Plugin):
                 try:
                     adata = self._read_input_data(data_path)
                 except Exception as exc:
-                    return f"Failed to load data from '{data_path}': {exc}"
+                    return self._error(f"Failed to load data from '{data_path}': {exc}")
                 start_node_id = register_raw(mgr, adata, data_path)
             else:
-                return "No data found and no valid parent state exists. Provide data_path."
+                return self._error("No data found and no valid parent state exists. Provide data_path.")
 
         try:
             final_node_id = ensure(
@@ -123,9 +135,33 @@ class SingleCellPipeline(Plugin):
                 **all_params,
             )
         except Exception as exc:
-            return f"Pipeline failed: {exc}"
+            return self._error(f"Pipeline failed: {exc}")
 
         return self._visualize_result(mgr, final_node_id, target_stage)
+
+    def _error(self, message):
+        return None, message
+
+    def _infer_active_data_path(self, mgr):
+        active_node_id = getattr(mgr, "active_node_id", None)
+        if active_node_id in mgr.graph.nodes:
+            data_path = self._data_path_for_lineage(mgr, active_node_id)
+            if data_path:
+                return data_path
+
+        raw_nodes = [n for n, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
+        if len(raw_nodes) == 1:
+            return mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("data_path")
+
+        return None
+
+    def _data_path_for_lineage(self, mgr, node_id):
+        lineage = list(nx.ancestors(mgr.graph, node_id)) + [node_id]
+        for lineage_node_id in reversed(lineage):
+            node_meta = mgr.graph.nodes[lineage_node_id]
+            if node_meta.get("action") == "raw":
+                return node_meta.get("params", {}).get("data_path")
+        return None
 
     def _read_input_data(self, data_path):
         if os.path.isdir(data_path):
@@ -133,6 +169,7 @@ class SingleCellPipeline(Plugin):
         return sc.read(data_path)
 
     def _visualize_result(self, mgr, node_id, stage):
+        mgr.active_node_id = node_id
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
 
@@ -177,8 +214,58 @@ class SingleCellPipeline(Plugin):
         with open(bio_path, "wb") as f:
             f.write(bio_buf.getvalue())
 
+        self._plot_final_umap(mgr, node_id, stage)
         self._plot_dag(mgr, node_id)
         return mgr.get_object(node_id), self._summary(mgr, node_id, stage)
+
+    def _plot_final_umap(self, mgr, node_id, stage):
+        if stage in {"umap", "cluster"}:
+            return
+
+        adata = mgr.get_object(node_id)
+        if "X_umap" not in adata.obsm:
+            return
+
+        color_key = self._get_umap_color_key(mgr, node_id, adata)
+
+        plt.figure(figsize=(6, 5))
+        if color_key is not None:
+            sc.pl.umap(adata, color=color_key, show=False)
+        else:
+            sc.pl.umap(adata, show=False)
+        plt.title(f"Final UMAP (Node: {node_id})")
+
+        umap_buf = io.BytesIO()
+        plt.savefig(umap_buf, format="png", bbox_inches="tight", dpi=160)
+        plt.close()
+
+        _, umap_path = self.ctx.create_artifact_path(
+            name="Final_UMAP",
+            file_name=f"result_final_umap_{node_id}.png",
+            type="image",
+            desc=f"Final UMAP plot{f' colored by {color_key}' if color_key else ''}.",
+        )
+        with open(umap_path, "wb") as f:
+            f.write(umap_buf.getvalue())
+
+    def _get_umap_color_key(self, mgr, node_id, adata):
+        node_meta = mgr.graph.nodes[node_id]
+        result_key = node_meta.get("result_key")
+        if result_key in adata.obs:
+            return result_key
+
+        lineage = list(nx.ancestors(mgr.graph, node_id)) + [node_id]
+        for ancestor_id in reversed(lineage):
+            ancestor_key = mgr.graph.nodes[ancestor_id].get("result_key")
+            if ancestor_key in adata.obs:
+                return ancestor_key
+
+        for prefix in ("leiden_res", "louvain_res"):
+            matching_keys = [key for key in adata.obs.keys() if str(key).startswith(prefix)]
+            if matching_keys:
+                return matching_keys[-1]
+
+        return None
 
     def _summary(self, mgr, node_id, stage):
         adata = mgr.get_object(node_id)

@@ -8,12 +8,17 @@ description: >-
   automatically executes missing upstream steps. If the user changes parameters
   for one step, the DAG reuses valid cached ancestors and creates a new branch
   from the changed step instead of rerunning unaffected work.
+  Resolution controls Leiden/Louvain clustering, not the UMAP embedding itself.
+  For requests like "change the UMAP resolution to 0.7", call target_stage="cluster"
+  or target_stage="markers" with resolution=0.7 so the final UMAP is colored by
+  the updated clusters.
   Always provide data_path on the first run for a dataset. Later calls may omit
   data_path if exactly one raw dataset is already loaded.
 
 examples:
   adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
+  adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.7)
   adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
 
 parameters:
