@@ -53,13 +53,14 @@ class SingleCellPipeline(Plugin):
     ):
         mgr = get_manager()
         target_stage = {
+            "clusters": "cluster",
             "cell_type": "annotation",
             "cell_type_annotation": "annotation",
             "annotate": "annotation",
         }.get(target_stage, target_stage)
         valid_stages = set(mgr.registry.rules.keys()) | {"raw"}
         if target_stage not in valid_stages:
-            return f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}"
+            return None, f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}"
 
         qc_min_genes = min_genes if min_genes is not None else qc_min_genes
         qc_max_genes = max_genes if max_genes is not None else qc_max_genes
@@ -107,14 +108,14 @@ class SingleCellPipeline(Plugin):
         try:
             result_node_id, match_type = mgr.find_node_smart(target_stage, **all_params)
         except ValueError as exc:
-            return str(exc)
+            return None, str(exc)
 
         if match_type == "exact_match":
             self.ctx.log("info", "sc_pipeline", f"Exact lineage match found: {result_node_id}")
             return self._visualize_result(mgr, result_node_id, target_stage, show_plots=show_plots)
 
         if match_type == "ambiguous":
-            return "Ambiguous request: found multiple partial matches. Specify upstream parameters to clarify."
+            return None, "Ambiguous request: found multiple partial matches. Specify upstream parameters to clarify."
 
         self.ctx.log("info", "sc_pipeline", "Locating nearest valid cached ancestor.")
         start_node_id = None
@@ -137,7 +138,7 @@ class SingleCellPipeline(Plugin):
             try:
                 target_raw_hash = compute_step_hash(mgr, "raw", "init", all_params)
             except ValueError as exc:
-                return str(exc)
+                return None, str(exc)
 
             if target_raw_hash in mgr.hash_index:
                 start_node_id = mgr.hash_index[target_raw_hash]
@@ -146,10 +147,10 @@ class SingleCellPipeline(Plugin):
                 try:
                     adata = self._read_input_data(data_path)
                 except Exception as exc:
-                    return f"Failed to load data from '{data_path}': {exc}"
+                    return None, f"Failed to load data from '{data_path}': {exc}"
                 start_node_id = register_raw(mgr, adata, data_path)
             else:
-                return "No data found and no valid parent state exists. Provide data_path."
+                return None, "No data found and no valid parent state exists. Provide data_path."
 
         try:
             final_node_id = ensure(
@@ -159,7 +160,7 @@ class SingleCellPipeline(Plugin):
                 **all_params,
             )
         except Exception as exc:
-            return f"Pipeline failed: {exc}"
+            return None, f"Pipeline failed: {exc}"
 
         return self._visualize_result(mgr, final_node_id, target_stage, show_plots=show_plots)
 

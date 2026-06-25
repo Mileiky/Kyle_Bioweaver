@@ -523,7 +523,9 @@ async def on_chat_resume(thread: Dict[str, Any]):
 @cl.on_chat_end
 async def end():
     user_session_id = context.session.thread_id or cl.user_session.get("id")
-    app_session = app_session_dict[user_session_id]
+    app_session = app_session_dict.get(user_session_id)
+    if app_session is None:
+        return
     session_map = load_session_map()
     session_map[user_session_id] = app_session.session_id
     save_session_map(session_map)
@@ -534,7 +536,18 @@ async def end():
 @cl.on_message
 async def main(message: cl.Message):
     user_session_id = context.session.thread_id or cl.user_session.get("id")  # type: ignore
-    session: Session = app_session_dict[user_session_id]  # type: ignore
+    session: Optional[Session] = app_session_dict.get(user_session_id)  # type: ignore
+    if session is None:
+        session_map = load_session_map()
+        taskweaver_session_id = session_map.get(user_session_id)
+        session = (
+            app.get_session(session_id=taskweaver_session_id)
+            if taskweaver_session_id is not None
+            else app.get_session()
+        )
+        app_session_dict[user_session_id] = session  # type: ignore
+        session_map[user_session_id] = session.session_id  # type: ignore
+        save_session_map(session_map)
     session_cwd_path = session.execution_cwd
     await persist_thread_binding(session, message.content)
 

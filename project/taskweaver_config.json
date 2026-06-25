@@ -3,7 +3,7 @@
   "llm.api_key": "ollama",
   "llm.api_type": "ollama",
   "llm.model": "gemma4:26b",
-  "llm.response_format": "text",
+  "llm.response_format": "json_object",
   "llm.max_tokens": 2048,
   "llm.temperature": 0,
   "execution_service.kernel_mode": "local",
