@@ -15,6 +15,12 @@ class SingleCellPipeline(Plugin):
         self,
         target_stage: str,
         data_path: str = None,
+        scrublet_batch_key: str = None,
+        scrublet_expected_doublet_rate: float = 0.05,
+        scrublet_threshold: float = None,
+        scrublet_n_prin_comps: int = 30,
+        scrublet_filter_doublets: bool = False,
+        scrublet_skip_on_failure: bool = True,
         qc_min_genes: int = 200,
         qc_max_genes: int = 2500,
         qc_mt_pct: float = 5,
@@ -60,6 +66,12 @@ class SingleCellPipeline(Plugin):
 
         all_params = {
             "data_path": data_path,
+            "scrublet_batch_key": scrublet_batch_key,
+            "scrublet_expected_doublet_rate": scrublet_expected_doublet_rate,
+            "scrublet_threshold": scrublet_threshold,
+            "scrublet_n_prin_comps": scrublet_n_prin_comps,
+            "scrublet_filter_doublets": scrublet_filter_doublets,
+            "scrublet_skip_on_failure": scrublet_skip_on_failure,
             "qc_min_genes": qc_min_genes,
             "qc_max_genes": qc_max_genes,
             "qc_mt_pct": qc_mt_pct,
@@ -182,7 +194,21 @@ class SingleCellPipeline(Plugin):
         node_meta = mgr.graph.nodes[node_id]
 
         plt.figure(figsize=(6, 5))
-        if stage == "qc":
+        if stage == "scrublet":
+            if "doublet_score" in adata.obs:
+                sc.pl.scrublet_score_distribution(adata, show=False)
+            elif adata.uns.get("scrublet", {}).get("status") == "skipped":
+                plt.text(
+                    0.5,
+                    0.5,
+                    f"Scrublet skipped\n{adata.uns['scrublet'].get('error', '')}",
+                    ha="center",
+                    va="center",
+                    wrap=True,
+                )
+            else:
+                plt.text(0.5, 0.5, "Scrublet scores not found", ha="center")
+        elif stage == "qc":
             sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
         elif stage == "normalize":
             sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
@@ -373,6 +399,8 @@ class SingleCellPipeline(Plugin):
             details = ""
             if action == "qc":
                 details = f"\nmin={params.get('qc_min_genes', '?')}"
+            elif action == "scrublet":
+                details = f"\nrate={params.get('scrublet_expected_doublet_rate', '?')}"
             elif action == "hvg":
                 details = f"\ntop={params.get('n_hvg', '?')}"
             elif action == "pca":

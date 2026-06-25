@@ -338,6 +338,61 @@ def register_raw(mgr, adata, path):
     return mgr.register_new_object(adata, None, "raw", {"data_path": path}, hash_val)
 
 
+def scrublet_rule(
+    mgr,
+    parent_id,
+    scrublet_batch_key=None,
+    scrublet_expected_doublet_rate=0.05,
+    scrublet_threshold=None,
+    scrublet_n_prin_comps=30,
+    scrublet_filter_doublets=False,
+    scrublet_skip_on_failure=True,
+):
+    adata = mgr.get_object(parent_id).copy()
+
+    if scrublet_batch_key is not None and scrublet_batch_key not in adata.obs:
+        raise ValueError(f"scrublet_batch_key '{scrublet_batch_key}' not found in adata.obs.")
+
+    effective_n_prin_comps = max(1, min(scrublet_n_prin_comps, adata.n_obs - 1, adata.n_vars - 1))
+    try:
+        sc.pp.scrublet(
+            adata,
+            batch_key=scrublet_batch_key,
+            expected_doublet_rate=scrublet_expected_doublet_rate,
+            threshold=scrublet_threshold,
+            n_prin_comps=effective_n_prin_comps,
+            random_state=0,
+        )
+    except Exception as exc:
+        if not scrublet_skip_on_failure:
+            raise
+        adata.uns["scrublet"] = {
+            "status": "skipped",
+            "error": str(exc),
+            "batch_key": scrublet_batch_key,
+            "expected_doublet_rate": scrublet_expected_doublet_rate,
+            "threshold": scrublet_threshold,
+            "n_prin_comps": effective_n_prin_comps,
+        }
+        return adata, "new_object", "scrublet_skipped"
+
+    if scrublet_filter_doublets:
+        if "predicted_doublet" not in adata.obs:
+            raise ValueError("Scrublet did not produce adata.obs['predicted_doublet'].")
+        adata = adata[~adata.obs["predicted_doublet"].astype(bool)].copy()
+
+    adata.uns["scrublet"] = {
+        "status": "completed",
+        "batch_key": scrublet_batch_key,
+        "expected_doublet_rate": scrublet_expected_doublet_rate,
+        "threshold": scrublet_threshold,
+        "n_prin_comps": effective_n_prin_comps,
+        "filtered_doublets": scrublet_filter_doublets,
+    }
+    result_key = "scrublet_filtered" if scrublet_filter_doublets else "scrublet"
+    return adata, "new_object", result_key
+
+
 def qc_filter_rule(mgr, parent_id, qc_min_genes=200, qc_max_genes=2500, qc_mt_pct=5, min_cells=3):
     adata = mgr.get_object(parent_id).copy()
     sc.pp.filter_genes(adata, min_cells=min_cells)
@@ -569,7 +624,8 @@ def annotation_rule(
 
 mgr = SCStateManager()
 
-mgr.registry.register(Rule("qc", ["raw"], qc_filter_rule))
+mgr.registry.register(Rule("scrublet", ["raw"], scrublet_rule))
+mgr.registry.register(Rule("qc", ["scrublet"], qc_filter_rule))
 mgr.registry.register(Rule("normalize", ["qc"], normalize_rule))
 mgr.registry.register(Rule("hvg", ["normalize"], hvg_rule))
 mgr.registry.register(Rule("scale", ["hvg"], scale_rule))

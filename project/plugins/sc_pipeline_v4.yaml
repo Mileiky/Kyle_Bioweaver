@@ -3,11 +3,17 @@ enabled: true
 required: false
 description: >-
   Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
-  and run discrete cached analysis steps: raw, qc, normalize, hvg, scale, pca,
-  neighbors, umap, cluster, markers, and annotation. Selecting a downstream
-  target_stage automatically executes missing upstream steps. If the user
+  and run discrete cached analysis steps: raw, scrublet, qc, normalize, hvg,
+  scale, pca, neighbors, umap, cluster, markers, and annotation. Selecting a
+  downstream target_stage automatically executes missing upstream steps. If the user
   changes parameters for one step, the DAG reuses valid cached ancestors and
   creates a new branch from the changed step instead of rerunning unaffected work.
+  Scrublet doublet detection runs immediately after raw loading and before QC
+  because Scanpy recommends raw unnormalized counts for Scrublet. By default it
+  stores doublet_score and predicted_doublet in adata.obs without filtering cells;
+  set scrublet_filter_doublets=true to remove predicted doublets before QC.
+  Scrublet is preferred but optional: if it fails and scrublet_skip_on_failure=true,
+  the pipeline records the failure in adata.uns["scrublet"] and continues downstream.
   Resolution controls Leiden/Louvain clustering, not the UMAP embedding itself.
   For requests like "change the UMAP resolution to 0.7", call target_stage="cluster"
   or target_stage="markers" with resolution=0.7 so the final UMAP is colored by
@@ -22,6 +28,7 @@ description: >-
 
 examples:
   adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
+  adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="scrublet")
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
   adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.7)
   adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
@@ -32,13 +39,49 @@ parameters:
     type: str
     required: true
     description: >-
-      Target DAG stage. Options are raw, qc, normalize, hvg, scale, pca,
-      neighbors, umap, cluster, markers, and annotation.
+      Target DAG stage. Options are raw, scrublet, qc, normalize, hvg, scale,
+      pca, neighbors, umap, cluster, markers, and annotation.
 
   - name: data_path
     type: str
     required: false
     description: Path to the .h5ad file. Required on the first run for a dataset.
+
+  - name: scrublet_batch_key
+    type: str
+    required: false
+    default: null
+    description: Optional obs column used for batch-aware Scrublet doublet detection.
+
+  - name: scrublet_expected_doublet_rate
+    type: float
+    required: false
+    default: 0.05
+    description: Estimated doublet rate for Scanpy Scrublet.
+
+  - name: scrublet_threshold
+    type: float
+    required: false
+    default: null
+    description: Optional explicit Scrublet doublet-score threshold. If null, Scrublet estimates it.
+
+  - name: scrublet_n_prin_comps
+    type: int
+    required: false
+    default: 30
+    description: Number of principal components used internally by Scrublet.
+
+  - name: scrublet_filter_doublets
+    type: bool
+    required: false
+    default: false
+    description: Whether to remove cells predicted as doublets before QC and downstream analysis.
+
+  - name: scrublet_skip_on_failure
+    type: bool
+    required: false
+    default: true
+    description: Whether to continue downstream if Scrublet fails, recording the failure in adata.uns["scrublet"].
 
   - name: qc_min_genes
     type: int
