@@ -282,23 +282,68 @@ class SingleCellPipeline(Plugin):
         )
 
     def _plot_dag(self, mgr, current_node):
-        plt.figure(figsize=(9, 6))
-        try:
-            pos = nx.nx_agraph.graphviz_layout(mgr.graph, prog="dot")
-        except ImportError:
-            pos = nx.spring_layout(mgr.graph, seed=42)
+        if not mgr.graph.nodes:
+            return
 
-        node_colors = ["lightgreen" if n == current_node else "lightblue" for n in mgr.graph.nodes()]
-        nx.draw(
+        pos = self._pipeline_dag_layout(mgr, current_node)
+        active_lineage = self._active_lineage(mgr, current_node)
+        stage_counts = {}
+        for _, attr in mgr.graph.nodes(data=True):
+            stage = attr.get("action", "?")
+            stage_counts[stage] = stage_counts.get(stage, 0) + 1
+
+        width = max(11, len({x for x, _ in pos.values()}) * 1.55)
+        height = max(5, max(stage_counts.values(), default=1) * 1.15 + 2)
+        plt.figure(figsize=(width, height))
+
+        active_edges = {
+            (u, v)
+            for u, v in mgr.graph.edges()
+            if u in active_lineage and v in active_lineage
+        }
+        edge_colors = ["#2f6f4e" if edge in active_edges else "#bac4d0" for edge in mgr.graph.edges()]
+        edge_widths = [2.4 if edge in active_edges else 1.1 for edge in mgr.graph.edges()]
+        nx.draw_networkx_edges(
             mgr.graph,
             pos,
-            with_labels=False,
-            node_color=node_colors,
-            node_size=2200,
-            edge_color="#555555",
+            edge_color=edge_colors,
+            width=edge_widths,
             arrows=True,
             arrowstyle="-|>",
-            arrowsize=20,
+            arrowsize=16,
+            min_source_margin=18,
+            min_target_margin=18,
+            connectionstyle="arc3,rad=0.02",
+        )
+
+        node_colors = []
+        edgecolors = []
+        linewidths = []
+        for node_id, attr in mgr.graph.nodes(data=True):
+            if node_id == current_node:
+                node_colors.append("#2fb344")
+                edgecolors.append("#14532d")
+                linewidths.append(2.6)
+            elif node_id in active_lineage:
+                node_colors.append("#b7e4c7")
+                edgecolors.append("#2f6f4e")
+                linewidths.append(2.0)
+            elif attr.get("is_virtual"):
+                node_colors.append("#fde68a")
+                edgecolors.append("#b45309")
+                linewidths.append(1.4)
+            else:
+                node_colors.append("#dbeafe")
+                edgecolors.append("#3b82f6")
+                linewidths.append(1.2)
+
+        nx.draw_networkx_nodes(
+            mgr.graph,
+            pos,
+            node_color=node_colors,
+            node_size=2600,
+            edgecolors=edgecolors,
+            linewidths=linewidths,
         )
 
         labels = {}
@@ -321,8 +366,23 @@ class SingleCellPipeline(Plugin):
 
             labels[node_id] = f"[{node_id[:4]}]\n{action}{details}"
 
-        nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=8)
+        nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=8, font_weight="bold")
+        stage_y = max(y for _, y in pos.values()) + 0.7
+        for stage, x in self._stage_columns(mgr).items():
+            if any(attr.get("action", "?") == stage for _, attr in mgr.graph.nodes(data=True)):
+                plt.text(
+                    x,
+                    stage_y,
+                    stage.upper(),
+                    ha="center",
+                    va="bottom",
+                    fontsize=9,
+                    fontweight="bold",
+                    color="#334155",
+                )
+
         plt.axis("off")
+        plt.margins(x=0.08, y=0.18)
         png_buf = io.BytesIO()
         plt.savefig(png_buf, format="png", bbox_inches="tight", dpi=160)
         plt.close()
@@ -335,3 +395,55 @@ class SingleCellPipeline(Plugin):
         )
         with open(png_path, "wb") as f:
             f.write(png_buf.getvalue())
+
+    def _pipeline_dag_layout(self, mgr, current_node):
+        active_lineage = self._active_lineage(mgr, current_node)
+        stage_columns = self._stage_columns(mgr)
+        stage_nodes = {}
+        for node_id, attr in mgr.graph.nodes(data=True):
+            stage = attr.get("action", "?")
+            stage_nodes.setdefault(stage, []).append(node_id)
+
+        pos = {}
+        for stage, nodes in stage_nodes.items():
+            nodes = sorted(
+                nodes,
+                key=lambda node_id: (
+                    node_id not in active_lineage,
+                    self._lineage_branch_sort_key(mgr, node_id),
+                    node_id,
+                ),
+            )
+            x = stage_columns.get(stage, len(stage_columns))
+            for idx, node_id in enumerate(nodes):
+                pos[node_id] = (x, -idx * 1.35)
+
+        return pos
+
+    def _stage_columns(self, mgr):
+        known_order = ["raw"] + list(mgr.dependency_chain("markers")[1:])
+        seen = set()
+        ordered_stages = []
+        for stage in known_order:
+            if stage not in seen:
+                ordered_stages.append(stage)
+                seen.add(stage)
+
+        extra_stages = sorted(
+            {
+                attr.get("action", "?")
+                for _, attr in mgr.graph.nodes(data=True)
+                if attr.get("action", "?") not in seen
+            },
+        )
+        ordered_stages.extend(extra_stages)
+        return {stage: idx * 1.7 for idx, stage in enumerate(ordered_stages)}
+
+    def _active_lineage(self, mgr, current_node):
+        if current_node not in mgr.graph.nodes:
+            return set()
+        return set(nx.ancestors(mgr.graph, current_node)) | {current_node}
+
+    def _lineage_branch_sort_key(self, mgr, node_id):
+        descendants = nx.descendants(mgr.graph, node_id)
+        return -len(descendants)
