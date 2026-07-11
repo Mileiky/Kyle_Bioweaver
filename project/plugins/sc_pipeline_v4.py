@@ -5,10 +5,9 @@ import os
 import matplotlib.pyplot as plt
 import networkx as nx
 import scanpy as sc
+
 from taskweaver.plugin import Plugin, register_plugin
-
 from project.utils.sc_dag_v4 import compute_step_hash, ensure, get_manager, register_raw
-
 
 @register_plugin
 class SingleCellPipeline(Plugin):
@@ -302,53 +301,50 @@ class SingleCellPipeline(Plugin):
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
 
-        plt.figure(figsize=(6, 5))
+        fig = plt.figure(figsize=(6, 5))
         if stage == "scrublet":
             if "doublet_score" in adata.obs:
                 sc.pl.scrublet_score_distribution(adata, show=False)
             elif adata.uns.get("scrublet", {}).get("status") == "skipped":
-                plt.text(
-                    0.5,
-                    0.5,
+                self._draw_center_message(
+                    plt.gca(),
                     f"Scrublet skipped\n{adata.uns['scrublet'].get('error', '')}",
-                    ha="center",
-                    va="center",
-                    wrap=True,
                 )
             else:
-                plt.text(0.5, 0.5, "Scrublet scores not found", ha="center")
+                self._draw_center_message(plt.gca(), "Scrublet scores not found")
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "qc":
             sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "normalize":
             sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "hvg":
             sc.pl.highly_variable_genes(adata, show=False)
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "batch_correct":
-            info = adata.uns.get("batch_correction", {})
-            plt.text(
-                0.5,
-                0.5,
-                f"Batch correction: {info.get('method', 'unknown')}\nshape={adata.shape}",
-                ha="center",
-                va="center",
-            )
+            fig = self._plot_batch_correction_result(mgr, node_id)
         elif stage == "pca":
             n_pcs = min(20, adata.obsm["X_pca"].shape[1])
             sc.pl.pca_variance_ratio(adata, n_pcs=n_pcs, show=False)
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "umap":
             sc.pl.umap(adata, show=False)
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "cluster":
             key = node_meta.get("result_key")
             if key in adata.obs:
                 sc.pl.umap(adata, color=key, show=False)
             else:
-                plt.text(0.5, 0.5, f"Key {key} not found", ha="center")
+                self._draw_center_message(plt.gca(), f"Key {key} not found")
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "markers":
             key = node_meta.get("result_key")
             if key in adata.uns:
                 sc.pl.rank_genes_groups(adata, key=key, n_genes=10, show=False)
             else:
-                plt.text(0.5, 0.5, f"Marker key {key} not found", ha="center")
+                self._draw_center_message(plt.gca(), f"Marker key {key} not found")
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "annotation":
             if "X_umap" in adata.obsm and "cell_type" in adata.obs:
                 sc.pl.umap(adata, color="cell_type", show=False)
@@ -357,14 +353,15 @@ class SingleCellPipeline(Plugin):
                 counts.plot(kind="barh", ax=plt.gca())
                 plt.xlabel("Cells")
             else:
-                plt.text(0.5, 0.5, "cell_type annotations not found", ha="center")
+                self._draw_center_message(plt.gca(), "cell_type annotations not found")
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
         else:
-            plt.text(0.5, 0.5, f"{stage} complete\nshape={adata.shape}", ha="center")
+            self._draw_center_message(plt.gca(), f"{stage} complete\nshape={adata.shape}")
+            plt.title(f"{stage.upper()} Result (Node: {node_id})")
 
-        plt.title(f"{stage.upper()} Result (Node: {node_id})")
         bio_buf = io.BytesIO()
-        plt.savefig(bio_buf, format="png", bbox_inches="tight", dpi=160)
-        plt.close()
+        fig.savefig(bio_buf, format="png", bbox_inches="tight", dpi=160)
+        plt.close(fig)
 
         _, bio_path = self.ctx.create_artifact_path(
             name="Analysis_Result",
@@ -378,6 +375,85 @@ class SingleCellPipeline(Plugin):
         self._plot_final_umap(mgr, node_id, stage)
         self._plot_dag(mgr, node_id)
         return mgr.get_object(node_id), self._summary(mgr, node_id, stage)
+
+    def _draw_center_message(self, ax, message):
+        ax.text(0.5, 0.5, message, ha="center", va="center", wrap=True)
+        ax.set_axis_off()
+
+    def _plot_batch_correction_result(self, mgr, node_id):
+        node_meta = mgr.graph.nodes[node_id]
+        adata_after = mgr.get_object(node_id)
+        parent_ids = list(mgr.graph.predecessors(node_id))
+        adata_before = mgr.get_object(parent_ids[0]) if parent_ids else None
+        info = adata_after.uns.get("batch_correction", {})
+        params = node_meta.get("params", {})
+        batch_key = info.get("key") or params.get("combat_key") or params.get("sample_key")
+
+        fig, axes = plt.subplots(1, 2, figsize=(11, 5))
+        fig.suptitle(f"BATCH_CORRECT Result (Node: {node_id})", fontsize=12, fontweight="bold")
+
+        before_err = self._plot_pca_panel(
+            axes[0],
+            adata_before,
+            batch_key=batch_key,
+            title="Before correction",
+        )
+        after_err = self._plot_pca_panel(
+            axes[1],
+            adata_after,
+            batch_key=batch_key,
+            title=f"After correction ({info.get('method', 'unknown')})",
+        )
+
+        subtitle = f"shape={adata_after.shape}"
+        if batch_key:
+            subtitle += f" | color={batch_key}"
+        fig.text(0.5, 0.02, subtitle, ha="center", va="bottom", fontsize=9, color="#475569")
+
+        if before_err or after_err:
+            details = "\n".join(err for err in [before_err, after_err] if err)
+            fig.text(0.5, 0.06, details, ha="center", va="bottom", fontsize=8, color="#64748b")
+
+        fig.tight_layout(rect=[0, 0.08, 1, 0.95])
+        return fig
+
+    def _plot_pca_panel(self, ax, adata, batch_key, title):
+        if adata is None:
+            self._draw_center_message(ax, "Reference state not available")
+            ax.set_title(title)
+            return "Reference state not available for before/after comparison."
+
+        plot_adata, err = self._prepare_pca_for_plot(adata)
+        if plot_adata is None:
+            self._draw_center_message(ax, err)
+            ax.set_title(title)
+            return f"{title}: {err}"
+
+        color_key = batch_key if batch_key in plot_adata.obs else None
+        plot_title = title if color_key else f"{title}\n(batch key unavailable)"
+
+        if color_key:
+            sc.pl.pca(plot_adata, color=color_key, ax=ax, show=False, title=plot_title)
+        else:
+            sc.pl.pca(plot_adata, ax=ax, show=False, title=plot_title)
+        return None
+
+    def _prepare_pca_for_plot(self, adata):
+        plot_adata = adata.copy()
+        if "X_pca" in plot_adata.obsm and plot_adata.obsm["X_pca"].shape[1] >= 2:
+            return plot_adata, None
+
+        if plot_adata.n_obs < 2 or plot_adata.n_vars < 2:
+            return None, "Not enough cells or genes for PCA."
+
+        try:
+            max_comps = min(10, plot_adata.n_obs - 1, plot_adata.n_vars - 1)
+            if max_comps < 2:
+                return None, "Not enough dimensions for PCA."
+            sc.tl.pca(plot_adata, n_comps=max_comps, svd_solver="arpack")
+            return plot_adata, None
+        except Exception as exc:
+            return None, f"PCA plot unavailable: {exc}"
 
     def _plot_final_umap(self, mgr, node_id, stage):
         if stage in {"umap", "cluster"}:
@@ -451,13 +527,10 @@ class SingleCellPipeline(Plugin):
 
         pos = self._pipeline_dag_layout(mgr, current_node)
         active_lineage = self._active_lineage(mgr, current_node)
-        stage_counts = {}
-        for _, attr in mgr.graph.nodes(data=True):
-            stage = attr.get("action", "?")
-            stage_counts[stage] = stage_counts.get(stage, 0) + 1
+        max_secondary_depth = max((self._secondary_depth(y) for _, y in pos.values()), default=0)
 
-        width = min(14, max(10, len({x for x, _ in pos.values()}) * 1.05))
-        height = min(7, max(4.5, max(stage_counts.values(), default=1) * 0.9 + 2))
+        width = min(15, max(10, len({x for x, _ in pos.values()}) * 1.15))
+        height = min(8, max(4.8, 3.2 + max_secondary_depth * 0.9))
         plt.figure(figsize=(width, height))
 
         active_edges = {
@@ -465,8 +538,8 @@ class SingleCellPipeline(Plugin):
             for u, v in mgr.graph.edges()
             if u in active_lineage and v in active_lineage
         }
-        edge_colors = ["#2f6f4e" if edge in active_edges else "#bac4d0" for edge in mgr.graph.edges()]
-        edge_widths = [2.4 if edge in active_edges else 1.1 for edge in mgr.graph.edges()]
+        edge_colors = ["#2f6f4e" if edge in active_edges else "#d6dee8" for edge in mgr.graph.edges()]
+        edge_widths = [2.6 if edge in active_edges else 0.9 for edge in mgr.graph.edges()]
         nx.draw_networkx_edges(
             mgr.graph,
             pos,
@@ -493,13 +566,13 @@ class SingleCellPipeline(Plugin):
                 edgecolors.append("#2f6f4e")
                 linewidths.append(2.0)
             elif attr.get("is_virtual"):
-                node_colors.append("#fde68a")
-                edgecolors.append("#b45309")
-                linewidths.append(1.4)
-            else:
-                node_colors.append("#dbeafe")
-                edgecolors.append("#3b82f6")
+                node_colors.append("#fef3c7")
+                edgecolors.append("#d97706")
                 linewidths.append(1.2)
+            else:
+                node_colors.append("#eef2f7")
+                edgecolors.append("#94a3b8")
+                linewidths.append(1.0)
 
         nx.draw_networkx_nodes(
             mgr.graph,
@@ -514,30 +587,14 @@ class SingleCellPipeline(Plugin):
         for node_id, attr in mgr.graph.nodes(data=True):
             action = attr.get("action", "?")
             params = attr.get("params", {})
-            details = ""
-            if action == "qc":
-                details = f"\nmin={params.get('qc_min_genes', '?')}"
-            elif action == "scrublet":
-                details = f"\nrate={params.get('scrublet_expected_doublet_rate', '?')}"
-            elif action == "hvg":
-                details = f"\ntop={params.get('n_hvg', '?')}"
-            elif action == "batch_correct":
-                details = f"\n{params.get('batch_correction_method', 'none')}"
-            elif action == "pca":
-                details = f"\npc={params.get('n_comps', '?')}"
-            elif action == "neighbors":
-                details = f"\nk={params.get('n_neighbors', '?')}"
-            elif action == "cluster":
-                details = f"\nres={params.get('resolution', '?')}"
-            elif action == "markers":
-                details = f"\nn={params.get('n_marker_genes', '?')}"
-            elif action == "annotation":
-                details = f"\nn={params.get('n_annotation_markers', '?')}"
-
-            labels[node_id] = f"[{node_id[:4]}]\n{action}{details}"
+            details = self._dag_label_details(action, params)
+            if node_id in active_lineage or node_id == current_node:
+                labels[node_id] = f"[{node_id[:4]}]\n{action}{details}"
+            else:
+                labels[node_id] = f"[{node_id[:4]}]\n{action}"
 
         nx.draw_networkx_labels(mgr.graph, pos, labels=labels, font_size=7, font_weight="bold")
-        stage_y = max(y for _, y in pos.values()) + 0.55
+        stage_y = max(y for _, y in pos.values()) + 0.65
         for stage, x in self._stage_columns(mgr).items():
             if any(attr.get("action", "?") == stage for _, attr in mgr.graph.nodes(data=True)):
                 plt.text(
@@ -555,7 +612,7 @@ class SingleCellPipeline(Plugin):
         xs = [x for x, _ in pos.values()]
         ys = [y for _, y in pos.values()]
         plt.xlim(min(xs) - 0.9, max(xs) + 0.9)
-        plt.ylim(min(ys) - 0.75, stage_y + 0.35)
+        plt.ylim(min(ys) - 0.75, stage_y + 0.45)
         png_buf = io.BytesIO()
         plt.savefig(png_buf, format="png", dpi=150)
         plt.close()
@@ -579,17 +636,33 @@ class SingleCellPipeline(Plugin):
 
         pos = {}
         for stage, nodes in stage_nodes.items():
-            nodes = sorted(
-                nodes,
+            x = stage_columns.get(stage, len(stage_columns))
+            active_nodes = [node_id for node_id in nodes if node_id in active_lineage]
+            inactive_nodes = [node_id for node_id in nodes if node_id not in active_lineage]
+
+            active_nodes = sorted(
+                active_nodes,
                 key=lambda node_id: (
-                    node_id not in active_lineage,
+                    0 if node_id == current_node else 1,
+                    self._active_lineage_rank(mgr, current_node, node_id),
+                    node_id,
+                ),
+            )
+            inactive_nodes = sorted(
+                inactive_nodes,
+                key=lambda node_id: (
+                    self._same_source_priority(mgr, current_node, node_id),
                     self._lineage_branch_sort_key(mgr, node_id),
                     node_id,
                 ),
             )
-            x = stage_columns.get(stage, len(stage_columns))
-            for idx, node_id in enumerate(nodes):
-                pos[node_id] = (x, -idx * 1.1)
+
+            for idx, node_id in enumerate(active_nodes):
+                pos[node_id] = (x, idx * 0.85)
+
+            for idx, node_id in enumerate(inactive_nodes):
+                row = idx + 1
+                pos[node_id] = (x, -1.45 - (row - 1) * 1.0)
 
         return pos
 
@@ -620,3 +693,50 @@ class SingleCellPipeline(Plugin):
     def _lineage_branch_sort_key(self, mgr, node_id):
         descendants = nx.descendants(mgr.graph, node_id)
         return -len(descendants)
+
+    def _active_lineage_rank(self, mgr, current_node, node_id):
+        lineage = list(nx.shortest_path(mgr.graph, source=self._raw_ancestor(mgr, current_node), target=current_node))
+        try:
+            return lineage.index(node_id)
+        except ValueError:
+            return len(lineage)
+
+    def _same_source_priority(self, mgr, current_node, node_id):
+        current_raw = self._raw_ancestor(mgr, current_node)
+        node_raw = self._raw_ancestor(mgr, node_id)
+        return 0 if current_raw == node_raw else 1
+
+    def _raw_ancestor(self, mgr, node_id):
+        if node_id not in mgr.graph.nodes:
+            return None
+        lineage = list(nx.ancestors(mgr.graph, node_id)) + [node_id]
+        for ancestor_id in reversed(lineage):
+            if mgr.graph.nodes[ancestor_id].get("action") == "raw":
+                return ancestor_id
+        return node_id
+
+    def _secondary_depth(self, y_value):
+        if y_value >= 0:
+            return 0
+        return int(round(abs(y_value + 1.45) / 1.0)) + 1
+
+    def _dag_label_details(self, action, params):
+        if action == "qc":
+            return f"\nmin={params.get('qc_min_genes', '?')}"
+        if action == "scrublet":
+            return f"\nrate={params.get('scrublet_expected_doublet_rate', '?')}"
+        if action == "hvg":
+            return f"\ntop={params.get('n_hvg', '?')}"
+        if action == "batch_correct":
+            return f"\n{params.get('batch_correction_method', 'none')}"
+        if action == "pca":
+            return f"\npc={params.get('n_comps', '?')}"
+        if action == "neighbors":
+            return f"\nk={params.get('n_neighbors', '?')}"
+        if action == "cluster":
+            return f"\nres={params.get('resolution', '?')}"
+        if action == "markers":
+            return f"\nn={params.get('n_marker_genes', '?')}"
+        if action == "annotation":
+            return f"\nn={params.get('n_annotation_markers', '?')}"
+        return ""
