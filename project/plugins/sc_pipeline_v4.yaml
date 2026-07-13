@@ -1,4 +1,5 @@
 name: sc_pipeline_v4
+code: sc_front
 enabled: true
 required: false
 description: >-
