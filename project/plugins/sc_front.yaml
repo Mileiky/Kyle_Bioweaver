@@ -1,0 +1,286 @@
+# TaskWeaver manifest for sc_front.py.
+name: sc_pipeline_v4
+code: sc_front
+enabled: true
+required: false
+description: >-
+  Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
+  and run discrete cached analysis steps: raw, scrublet, qc, normalize, hvg,
+  batch_correct, scale, pca, neighbors, umap, cluster, markers, and annotation.
+  Selecting a downstream target_stage automatically executes missing upstream steps. If the user
+  changes parameters for one step, the DAG reuses valid cached ancestors and
+  creates a new branch from the changed step instead of rerunning unaffected work.
+  Multi-sample runs are supported with data_paths and sample_ids. Samples are
+  concatenated with scanpy/anndata concat, annotated in adata.obs[sample_key],
+  and processed through the same downstream DAG. For multi-sample runs, Scrublet
+  and HVG selection default to using sample_key as their batch key.
+  Scrublet doublet detection runs immediately after raw loading and before QC
+  because Scanpy recommends raw unnormalized counts for Scrublet. By default it
+  stores doublet_score and predicted_doublet in adata.obs without filtering cells;
+  set scrublet_filter_doublets=true to remove predicted doublets before QC.
+  Scrublet is preferred but optional: if it fails and scrublet_skip_on_failure=true,
+  the pipeline records the failure in adata.uns["scrublet"] and continues downstream.
+  Resolution controls Leiden/Louvain clustering, not the UMAP embedding itself.
+  For requests like "change the UMAP resolution to 0.7", call target_stage="cluster"
+  or target_stage="markers" with resolution=0.7 so the final UMAP is colored by
+  the updated clusters.
+  Always provide data_path on the first run for a dataset. Later calls may omit
+  data_path if exactly one raw dataset is already loaded.
+  Cell-type annotation is available as target_stage="annotation". It uses marker
+  genes from the markers stage and sends the top markers for each cluster to a
+  local Ollama/OpenAI-compatible chat-completions model. Predicted labels are
+  stored in adata.obs["cell_type"], with metadata in
+  adata.uns["cell_type_annotation"].
+
+examples:
+  adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
+  adata, summary = sc_pipeline_v4(data_paths=["/data/sample1", "/data/sample2"], sample_ids=["sample1", "sample2"], target_stage="markers")
+  adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="scrublet")
+  adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
+  adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.7)
+  adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
+  adata, summary = sc_pipeline_v4(target_stage="annotation", annotation_model="qwen3.5:122b")
+
+parameters:
+  - name: target_stage
+    type: str
+    required: true
+    description: >-
+      Target DAG stage. Options are raw, scrublet, qc, normalize, hvg,
+      batch_correct, scale, pca, neighbors, umap, cluster, markers, and annotation.
+
+  - name: data_path
+    type: str
+    required: false
+    description: Path to the .h5ad file. Required on the first run for a dataset.
+
+  - name: data_paths
+    type: list
+    required: false
+    default: null
+    description: Multiple dataset paths for multi-sample analysis. Use either data_path or data_paths, not both.
+
+  - name: sample_ids
+    type: list
+    required: false
+    default: null
+    description: Sample IDs matching data_paths. Defaults to sample_1, sample_2, etc. if omitted.
+
+  - name: sample_key
+    type: str
+    required: false
+    default: sample
+    description: obs column used to store sample identity for multi-sample analysis.
+
+  - name: multi_sample_join
+    type: str
+    required: false
+    default: inner
+    description: Gene join mode for concatenating samples. Use inner for shared genes or outer for union.
+
+  - name: scrublet_batch_key
+    type: str
+    required: false
+    default: null
+    description: Optional obs column used for batch-aware Scrublet doublet detection.
+
+  - name: scrublet_expected_doublet_rate
+    type: float
+    required: false
+    default: 0.05
+    description: Estimated doublet rate for Scanpy Scrublet.
+
+  - name: scrublet_threshold
+    type: float
+    required: false
+    default: null
+    description: Optional explicit Scrublet doublet-score threshold. If null, Scrublet estimates it.
+
+  - name: scrublet_n_prin_comps
+    type: int
+    required: false
+    default: 30
+    description: Number of principal components used internally by Scrublet.
+
+  - name: scrublet_filter_doublets
+    type: bool
+    required: false
+    default: false
+    description: Whether to remove cells predicted as doublets before QC and downstream analysis.
+
+  - name: scrublet_skip_on_failure
+    type: bool
+    required: false
+    default: true
+    description: Whether to continue downstream if Scrublet fails, recording the failure in adata.uns["scrublet"].
+
+  - name: qc_min_genes
+    type: int
+    required: false
+    default: 200
+    description: Minimum genes per cell for QC filtering.
+
+  - name: qc_max_genes
+    type: int
+    required: false
+    default: 2500
+    description: Maximum genes per cell for QC filtering.
+
+  - name: qc_mt_pct
+    type: float
+    required: false
+    default: 5
+    description: Maximum mitochondrial percentage for QC filtering. Use null to disable.
+
+  - name: min_cells
+    type: int
+    required: false
+    default: 3
+    description: Minimum cells per gene for QC filtering.
+
+  - name: target_sum
+    type: float
+    required: false
+    default: 10000
+    description: Target total counts for normalize_total before log1p.
+
+  - name: n_hvg
+    type: int
+    required: false
+    default: 2000
+    description: Number of highly variable genes to retain.
+
+  - name: hvg_flavor
+    type: str
+    required: false
+    default: seurat
+    description: Scanpy highly_variable_genes flavor.
+
+  - name: hvg_batch_key
+    type: str
+    required: false
+    default: null
+    description: Optional batch key for sample-aware HVG selection. Defaults to sample_key for multi-sample runs.
+
+  - name: batch_correction_method
+    type: str
+    required: false
+    default: none
+    description: Optional batch correction method after HVG. Options are none and combat.
+
+  - name: combat_key
+    type: str
+    required: false
+    default: null
+    description: obs column used by ComBat. Defaults to sample_key for multi-sample runs.
+
+  - name: max_scale_value
+    type: int
+    required: false
+    default: 10
+    description: Maximum clipped value for scanpy.pp.scale.
+
+  - name: regress_out
+    type: bool
+    required: false
+    default: true
+    description: Whether to regress out total_counts and pct_counts_mt before scaling.
+
+  - name: n_comps
+    type: int
+    required: false
+    default: 50
+    description: Number of principal components to compute.
+
+  - name: n_neighbors
+    type: int
+    required: false
+    default: 10
+    description: Number of neighbors for graph construction.
+
+  - name: n_pcs
+    type: int
+    required: false
+    default: 40
+    description: Number of PCs used for neighbor graph construction.
+
+  - name: use_rep
+    type: str
+    required: false
+    default: X_pca
+    description: Representation in adata.obsm used for neighbor graph construction.
+
+  - name: min_dist
+    type: float
+    required: false
+    default: 0.5
+    description: Minimum distance parameter for UMAP.
+
+  - name: spread
+    type: float
+    required: false
+    default: 1.0
+    description: Spread parameter for UMAP.
+
+  - name: resolution
+    type: float
+    required: false
+    default: 0.5
+    description: Resolution for Leiden or Louvain clustering.
+
+  - name: cluster_method
+    type: str
+    required: false
+    default: leiden
+    description: Clustering method. Options are leiden and louvain.
+
+  - name: groupby
+    type: str
+    required: false
+    default: null
+    description: Cluster/group key for marker detection. Defaults to the active cluster key.
+
+  - name: marker_method
+    type: str
+    required: false
+    default: wilcoxon
+    description: Scanpy rank_genes_groups method for marker detection.
+
+  - name: n_marker_genes
+    type: int
+    required: false
+    default: 25
+    description: Number of marker genes to rank per group.
+
+  - name: annotation_model
+    type: str
+    required: false
+    default: qwen3.5:122b
+    description: Local Ollama/OpenAI-compatible chat model used for cell-type annotation.
+
+  - name: annotation_api_base
+    type: str
+    required: false
+    default: http://localhost:11434/v1
+    description: Base URL for the local Ollama/OpenAI-compatible chat-completions endpoint.
+
+  - name: annotation_api_key
+    type: str
+    required: false
+    default: ollama
+    description: API key sent to the endpoint. For local Ollama this can be a dummy value.
+
+  - name: n_annotation_markers
+    type: int
+    required: false
+    default: 10
+    description: Number of top marker genes per cluster to send to the annotation model.
+
+returns:
+  - name: adata
+    type: AnnData
+    description: AnnData object for the active DAG node.
+
+  - name: summary
+    type: str
+    description: Status report including active node, data shape, result key, and DAG size.
