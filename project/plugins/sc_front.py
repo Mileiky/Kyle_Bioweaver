@@ -1,8 +1,5 @@
-import os
-
 from taskweaver.plugin import Plugin, register_plugin
 
-from project.sc_pipeline.sc_dag import DEFAULT_STORAGE_DIR
 from project.sc_pipeline.sc_run import get_runner
 
 
@@ -53,17 +50,15 @@ class SingleCellPipeline(Plugin):
     ):
         """Run the single-cell pipeline when TaskWeaver calls this plugin."""
         try:
-            storage_root = self.config.get("storage_dir", DEFAULT_STORAGE_DIR)
-            storage_dir = os.path.join(storage_root, self.ctx.session_id)
-            runner = get_runner(ctx=self.ctx, config=self.config, storage_dir=storage_dir)
+            runner = get_runner(ctx=self.ctx, config=self.config)
             return runner.execute(
                 target_stage=target_stage,
                 data_path=data_path,
                 data_paths=data_paths,
                 sample_ids=sample_ids,
                 sample_key=sample_key,
-                multi_sample_join=multi_sample_join,
-                scrublet_batch_key=scrublet_batch_key,
+                multi_sample_join=multi_sample_join, # Look at multi-sample behavior
+                scrublet_batch_key=scrublet_batch_key, # Let into scrublet, how it works, and what is done here
                 scrublet_expected_doublet_rate=scrublet_expected_doublet_rate,
                 scrublet_threshold=scrublet_threshold,
                 scrublet_n_prin_comps=scrublet_n_prin_comps,
@@ -78,7 +73,7 @@ class SingleCellPipeline(Plugin):
                 hvg_flavor=hvg_flavor,
                 hvg_batch_key=hvg_batch_key,
                 batch_correction_method=batch_correction_method,
-                combat_key=combat_key,
+                combat_key=combat_key, # What is combat key?
                 max_scale_value=max_scale_value,
                 regress_out=regress_out,
                 n_comps=n_comps,
