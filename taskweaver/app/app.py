@@ -68,6 +68,10 @@ class TaskWeaverApp(object):
         """
         self.session_manager.stop_all_sessions()
 
+    def stop_session(self, session_id: str) -> None:
+        """Stop one session and release its worker and execution resources."""
+        self.session_manager.stop_session(session_id)
+
     @staticmethod
     def discover_app_dir(
         app_dir: Optional[str] = None,

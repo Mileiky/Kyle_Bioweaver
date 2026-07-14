@@ -17,6 +17,12 @@ DEFAULT_STORAGE_DIR = os.path.abspath(
 )
 
 RUNTIME_ONLY_PARAM_KEYS = {"annotation_api_key"}
+LEGACY_PARAM_DEFAULTS = {
+    "neighbors": {
+        "integration_method": "none",
+        "integration_batch_key": None,
+    }
+}
 
 
 def _json_ready(value: Any) -> Any:
@@ -32,6 +38,11 @@ def _sanitize_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Remove runtime-only data such as API keys before storing or hashing parameters."""
     params = params or {}
     return {key: _json_ready(value) for key, value in params.items() if key not in RUNTIME_ONLY_PARAM_KEYS}
+
+
+def _saved_param(action: str, params: Dict[str, Any], key: str) -> Any:
+    """Read a saved parameter while supplying defaults for older DAG schemas."""
+    return params.get(key, LEGACY_PARAM_DEFAULTS.get(action, {}).get(key))
 
 
 def file_fingerprint(path: Optional[str]) -> Dict[str, Any]:
@@ -284,7 +295,7 @@ class SCStateManager:
             node_params = attr.get("params", {})
             for key in target_rule.param_keys:
                 user_val = sanitized_user_params.get(key)
-                if user_val is not None and str(user_val) != str(node_params.get(key)):
+                if user_val is not None and str(user_val) != str(_saved_param(target_stage, node_params, key)):
                     break
             else:
                 candidates.append(node_id)
@@ -331,7 +342,7 @@ class SCStateManager:
                 rule = self.registry.get(node_meta["action"])
                 node_params = node_meta.get("params", {})
                 if any(
-                    node_params.get(key) != sanitized_params.get(key)
+                    _saved_param(node_meta["action"], node_params, key) != sanitized_params.get(key)
                     for key in rule.param_keys
                 ):
                     break

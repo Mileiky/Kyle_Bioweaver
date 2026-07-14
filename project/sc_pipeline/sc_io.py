@@ -290,11 +290,20 @@ class SingleCellIO:
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
         result_key = node_meta.get("result_key")
-        lineage = mgr.ancestors_including_self(node_id)
+        lineage = mgr.lineage_to_node(node_id)
+        integration = "none"
+        for lineage_node_id in lineage:
+            lineage_meta = mgr.graph.nodes[lineage_node_id]
+            params = lineage_meta.get("params", {})
+            if lineage_meta.get("action") == "batch_correct" and params.get("batch_correction_method") == "combat":
+                integration = f"ComBat on expression (batch key: {params.get('combat_key')})"
+            elif lineage_meta.get("action") == "neighbors" and params.get("integration_method") == "bbknn":
+                integration = f"BBKNN neighbor graph (batch key: {params.get('integration_batch_key')})"
         return (
             f"Stage '{stage}' complete.\n"
             f"- Active node: {node_id}\n"
             f"- Data shape: {adata.n_obs} cells x {adata.n_vars} genes\n"
+            f"- Integration: {integration}\n"
             f"- Result key: {result_key or 'None'}\n"
             f"- Cached DAG nodes: {len(mgr.graph.nodes)}\n"
             f"- Lineage nodes considered: {len(lineage)}"
@@ -507,6 +516,8 @@ class SingleCellIO:
         if action == "pca":
             return f"\npc={params.get('n_comps', '?')}"
         if action == "neighbors":
+            if params.get("integration_method") == "bbknn":
+                return f"\nBBKNN\n{params.get('integration_batch_key', '?')}"
             return f"\nk={params.get('n_neighbors', '?')}"
         if action == "cluster":
             return f"\nres={params.get('resolution', '?')}"

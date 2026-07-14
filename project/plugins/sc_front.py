@@ -1,5 +1,8 @@
+import os
+
 from taskweaver.plugin import Plugin, register_plugin
 
+from project.sc_pipeline.sc_dag import DEFAULT_STORAGE_DIR
 from project.sc_pipeline.sc_run import get_runner
 
 
@@ -29,6 +32,8 @@ class SingleCellPipeline(Plugin):
         hvg_batch_key: str = None,
         batch_correction_method: str = "none",
         combat_key: str = None,
+        integration_method: str = "auto",
+        integration_batch_key: str = None,
         max_scale_value: int = 10,
         regress_out: bool = True,
         n_comps: int = 50,
@@ -42,7 +47,7 @@ class SingleCellPipeline(Plugin):
         groupby: str = None,
         marker_method: str = "wilcoxon",
         n_marker_genes: int = 25,
-        annotation_model: str = "qwen3.5:122b",
+        annotation_model: str = "gemma4:26b-mlx-bf16",
         annotation_api_base: str = "http://localhost:11434/v1",
         annotation_api_key: str = "ollama",
         n_annotation_markers: int = 10,
@@ -50,7 +55,9 @@ class SingleCellPipeline(Plugin):
     ):
         """Run the single-cell pipeline when TaskWeaver calls this plugin."""
         try:
-            runner = get_runner(ctx=self.ctx, config=self.config)
+            storage_root = self.config.get("storage_dir", DEFAULT_STORAGE_DIR)
+            storage_dir = os.path.join(storage_root, self.ctx.session_id)
+            runner = get_runner(ctx=self.ctx, config=self.config, storage_dir=storage_dir)
             return runner.execute(
                 target_stage=target_stage,
                 data_path=data_path,
@@ -74,6 +81,8 @@ class SingleCellPipeline(Plugin):
                 hvg_batch_key=hvg_batch_key,
                 batch_correction_method=batch_correction_method,
                 combat_key=combat_key, # What is combat key?
+                integration_method=integration_method,
+                integration_batch_key=integration_batch_key,
                 max_scale_value=max_scale_value,
                 regress_out=regress_out,
                 n_comps=n_comps,

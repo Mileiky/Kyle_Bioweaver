@@ -54,6 +54,9 @@ class SingleCellPipelineRunner:
         scrublet_batch_key = kwargs.get("scrublet_batch_key")
         hvg_batch_key = kwargs.get("hvg_batch_key")
         combat_key = kwargs.get("combat_key")
+        integration_method = (kwargs.get("integration_method") or "auto").lower()
+        integration_batch_key = kwargs.get("integration_batch_key")
+        legacy_batch_method = (kwargs.get("batch_correction_method") or "none").lower()
 
         if target_stage == "umap" and kwargs.get("resolution", 0.5) != 0.5:
             self.ctx.log(
@@ -74,8 +77,6 @@ class SingleCellPipelineRunner:
                 scrublet_batch_key = sample_key
             if hvg_batch_key is None:
                 hvg_batch_key = sample_key
-            if combat_key is None:
-                combat_key = sample_key
         elif data_path is None:
             source_params = self.infer_active_source_params()
             if source_params:
@@ -89,8 +90,35 @@ class SingleCellPipelineRunner:
                     scrublet_batch_key = sample_key
                 if hvg_batch_key is None:
                     hvg_batch_key = sample_key
-                if combat_key is None:
-                    combat_key = sample_key
+        is_multi_sample = bool(data_paths and len(data_paths) > 1)
+        if integration_method not in {"auto", "none", "combat", "bbknn"}:
+            raise ValueError("integration_method must be 'auto', 'none', 'combat', or 'bbknn'.")
+        if legacy_batch_method not in {"none", "combat"}:
+            raise ValueError("batch_correction_method must be 'none' or 'combat'.")
+        if legacy_batch_method == "combat":
+            if integration_method not in {"auto", "combat"}:
+                raise ValueError(
+                    "Conflicting integration choices: batch_correction_method='combat' "
+                    f"cannot be combined with integration_method='{integration_method}'."
+                )
+            integration_method = "combat"
+        elif integration_method == "auto":
+            integration_method = "bbknn" if is_multi_sample else "none"
+
+        if integration_method == "combat":
+            if integration_batch_key and combat_key and integration_batch_key != combat_key:
+                raise ValueError("integration_batch_key and combat_key must match when both are provided.")
+            combat_key = integration_batch_key or combat_key or (sample_key if is_multi_sample else None)
+            batch_correction_method = "combat"
+            neighbor_integration_method = "none"
+        else:
+            batch_correction_method = "none"
+            neighbor_integration_method = integration_method
+            if combat_key is None and is_multi_sample:
+                combat_key = sample_key
+
+        if neighbor_integration_method == "bbknn" and integration_batch_key is None and is_multi_sample:
+            integration_batch_key = sample_key
 
         valid_stages = set(mgr.registry.rules.keys()) | {"raw"}
         if target_stage not in valid_stages:
@@ -116,7 +144,7 @@ class SingleCellPipelineRunner:
             "n_hvg": kwargs.get("n_hvg", 2000),
             "hvg_flavor": kwargs.get("hvg_flavor", "seurat"),
             "hvg_batch_key": hvg_batch_key,
-            "batch_correction_method": kwargs.get("batch_correction_method", "none"),
+            "batch_correction_method": batch_correction_method,
             "combat_key": combat_key,
             "max_scale_value": kwargs.get("max_scale_value", 10),
             "regress_out": kwargs.get("regress_out", True),
@@ -124,6 +152,8 @@ class SingleCellPipelineRunner:
             "n_neighbors": kwargs.get("n_neighbors", 10),
             "n_pcs": kwargs.get("n_pcs", 40),
             "use_rep": kwargs.get("use_rep", "X_pca"),
+            "integration_method": neighbor_integration_method,
+            "integration_batch_key": integration_batch_key,
             "min_dist": kwargs.get("min_dist", 0.5),
             "spread": kwargs.get("spread", 1.0),
             "resolution": kwargs.get("resolution", 0.5),
@@ -131,7 +161,7 @@ class SingleCellPipelineRunner:
             "groupby": kwargs.get("groupby"),
             "marker_method": kwargs.get("marker_method", "wilcoxon"),
             "n_marker_genes": kwargs.get("n_marker_genes", 25),
-            "annotation_model": kwargs.get("annotation_model", "qwen3.5:122b"),
+            "annotation_model": kwargs.get("annotation_model", "gemma4:26b-mlx-bf16"),
             "annotation_api_base": kwargs.get("annotation_api_base", "http://localhost:11434/v1"),
             "annotation_api_key": kwargs.get("annotation_api_key", "ollama"),
             "n_annotation_markers": kwargs.get("n_annotation_markers", 10),
@@ -340,4 +370,3 @@ def get_runner(
             storage_dir=resolved_storage_dir,
         )
     return _RUNNER
-

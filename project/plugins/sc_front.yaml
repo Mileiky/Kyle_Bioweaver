@@ -13,7 +13,10 @@ description: >-
   Multi-sample runs are supported with data_paths and sample_ids. Samples are
   concatenated with scanpy/anndata concat, annotated in adata.obs[sample_key],
   and processed through the same downstream DAG. For multi-sample runs, Scrublet
-  and HVG selection default to using sample_key as their batch key.
+  and HVG selection default to using sample_key as their batch key. Integration
+  defaults to BBKNN for multiple samples and ordinary neighbors for one sample.
+  ComBat can be selected explicitly to adjust expression before PCA; BBKNN
+  changes only the neighbor graph after PCA.
   Scrublet doublet detection runs immediately after raw loading and before QC
   because Scanpy recommends raw unnormalized counts for Scrublet. By default it
   stores doublet_score and predicted_doublet in adata.obs without filtering cells;
@@ -35,11 +38,12 @@ description: >-
 examples:
   adata, summary = sc_front(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
   adata, summary = sc_front(data_paths=["/data/sample1", "/data/sample2"], sample_ids=["sample1", "sample2"], target_stage="markers")
+  adata, summary = sc_front(data_paths=["/data/sample1", "/data/sample2"], target_stage="umap", integration_method="combat")
   adata, summary = sc_front(data_path="project/data/test_data.h5ad", target_stage="scrublet")
   adata, summary = sc_front(target_stage="cluster", resolution=0.8)
   adata, summary = sc_front(target_stage="cluster", resolution=0.7)
   adata, summary = sc_front(target_stage="markers", n_marker_genes=25)
-  adata, summary = sc_front(target_stage="annotation", annotation_model="qwen3.5:122b")
+  adata, summary = sc_front(target_stage="annotation", annotation_model="gemma4:26b-mlx-bf16")
 
 parameters:
   - name: target_stage
@@ -166,13 +170,29 @@ parameters:
     type: str
     required: false
     default: none
-    description: Optional batch correction method after HVG. Options are none and combat.
+    description: Backward-compatible ComBat selector. Prefer integration_method for new calls.
 
   - name: combat_key
     type: str
     required: false
     default: null
-    description: obs column used by ComBat. Defaults to sample_key for multi-sample runs.
+    description: Backward-compatible ComBat batch key. Prefer integration_batch_key for new calls.
+
+  - name: integration_method
+    type: str
+    required: false
+    default: auto
+    description: >-
+      Integration method. Options are auto, none, combat, and bbknn. Auto uses
+      BBKNN for multiple samples and ordinary neighbors for one sample. ComBat
+      adjusts expression before PCA; BBKNN replaces ordinary neighbor construction.
+
+  - name: integration_batch_key
+    type: str
+    required: false
+    default: null
+    description: >-
+      obs column used by ComBat or BBKNN. Defaults to sample_key for multi-sample runs.
 
   - name: max_scale_value
     type: int
@@ -196,19 +216,19 @@ parameters:
     type: int
     required: false
     default: 10
-    description: Number of neighbors for graph construction.
+    description: Number of neighbors for ordinary Scanpy graph construction. BBKNN uses its own defaults.
 
   - name: n_pcs
     type: int
     required: false
     default: 40
-    description: Number of PCs used for neighbor graph construction.
+    description: Number of PCs used for ordinary Scanpy neighbor construction. BBKNN uses its own defaults.
 
   - name: use_rep
     type: str
     required: false
     default: X_pca
-    description: Representation in adata.obsm used for neighbor graph construction.
+    description: Representation used for ordinary Scanpy neighbors. BBKNN uses its X_pca default.
 
   - name: min_dist
     type: float
@@ -255,7 +275,7 @@ parameters:
   - name: annotation_model
     type: str
     required: false
-    default: qwen3.5:122b
+    default: gemma4:26b-mlx-bf16
     description: Local Ollama/OpenAI-compatible chat model used for cell-type annotation.
 
   - name: annotation_api_base

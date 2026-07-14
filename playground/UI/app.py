@@ -523,12 +523,17 @@ async def on_chat_resume(thread: Dict[str, Any]):
 @cl.on_chat_end
 async def end():
     user_session_id = context.session.thread_id or cl.user_session.get("id")
-    app_session = app_session_dict[user_session_id]
-    session_map = load_session_map()
-    session_map[user_session_id] = app_session.session_id
-    save_session_map(session_map)
-    print(f"Detaching from session {app_session.session_id}")
-    app_session_dict.pop(user_session_id)
+    app_session = app_session_dict.pop(user_session_id, None)
+    if app_session is None:
+        return
+
+    try:
+        session_map = load_session_map()
+        session_map[user_session_id] = app_session.session_id
+        save_session_map(session_map)
+    finally:
+        print(f"Stopping session {app_session.session_id}")
+        app.stop_session(app_session.session_id)
 
 
 @cl.on_message

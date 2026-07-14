@@ -54,7 +54,7 @@ def main():
     )
     parser.add_argument(
         "--model",
-        default="qwen3.5:122b",
+        default="gemma4:26b-mlx-bf16",
         help="Model name for the annotation backend.",
     )
     parser.add_argument(

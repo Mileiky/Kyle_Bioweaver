@@ -16,7 +16,7 @@ if REPO_ROOT not in sys.path:
 
 from project.plugins.sc_front import SingleCellPipeline
 from project.sc_pipeline.sc_dag import SCStateManager, compute_step_hash
-from project.sc_pipeline.sc_rules import create_default_registry
+from project.sc_pipeline.sc_rules import batch_correct_rule, create_default_registry, neighbors_rule, scrublet_rule
 from project.sc_pipeline.sc_run import PipelineRequest, SingleCellPipelineRunner, get_runner
 from taskweaver.plugin.context import temp_context
 
@@ -52,6 +52,178 @@ def _assert_artifact_is_not_blank(ctx, name):
     assert float(image[..., :3].std()) > 0.01
 
 
+def test_scrublet_rule_preserves_scanpy_results_and_parent():
+    parent = _make_test_adata()
+    manager = MagicMock()
+    manager.get_object.return_value = parent
+
+    def add_scrublet_results(adata, **kwargs):
+        adata.obs["doublet_score"] = np.linspace(0, 1, adata.n_obs)
+        adata.obs["predicted_doublet"] = [True] + [False] * (adata.n_obs - 1)
+        adata.uns["scrublet"] = {
+            "doublet_scores_sim": np.array([0.2, 0.8]),
+            "parameters": {"expected_doublet_rate": kwargs["expected_doublet_rate"]},
+        }
+
+    with patch("project.sc_pipeline.sc_rules.sc.pp.scrublet", side_effect=add_scrublet_results) as scrublet:
+        result, result_type, result_key = scrublet_rule(
+            manager,
+            "raw-node",
+            scrublet_filter_doublets=True,
+        )
+
+    assert "doublet_score" not in parent.obs
+    assert result.n_obs == parent.n_obs - 1
+    assert result.uns["scrublet"]["doublet_scores_sim"].tolist() == [0.2, 0.8]
+    assert result_type == "new_object"
+    assert result_key == "scrublet_filtered"
+    assert scrublet.call_args.kwargs["n_prin_comps"] == parent.n_vars - 1
+
+
+def test_scrublet_rule_can_skip_or_raise_failures():
+    manager = MagicMock()
+    manager.get_object.return_value = _make_test_adata()
+
+    with patch("project.sc_pipeline.sc_rules.sc.pp.scrublet", side_effect=RuntimeError("cannot score")):
+        result, _, result_key = scrublet_rule(manager, "raw-node")
+        assert result.uns["scrublet"] == {"status": "skipped", "error": "cannot score"}
+        assert result_key == "scrublet_skipped"
+
+        with pytest.raises(RuntimeError, match="cannot score"):
+            scrublet_rule(manager, "raw-node", scrublet_skip_on_failure=False)
+
+
+def test_neighbors_rule_uses_bbknn_without_ordinary_neighbors():
+    parent = _make_test_adata()
+    parent.obs["sample"] = ["a"] * 15 + ["b"] * 15
+    parent.obsm["X_pca"] = np.ones((parent.n_obs, 5))
+    manager = MagicMock()
+    manager.get_object.return_value = parent
+
+    with (
+        patch("project.sc_pipeline.sc_rules.sc.external.pp.bbknn") as bbknn,
+        patch("project.sc_pipeline.sc_rules.sc.pp.neighbors") as ordinary_neighbors,
+    ):
+        result, result_type, result_key = neighbors_rule(
+            manager,
+            "pca-node",
+            integration_method="bbknn",
+            integration_batch_key="sample",
+        )
+
+    bbknn.assert_called_once_with(result, batch_key="sample")
+    ordinary_neighbors.assert_not_called()
+    assert result is not parent
+    np.testing.assert_array_equal(result.X, parent.X)
+    assert result_type == "new_object"
+    assert result_key == "neighbors"
+
+
+def test_neighbors_rule_validates_bbknn_batch_key():
+    parent = _make_test_adata()
+    parent.obsm["X_pca"] = np.ones((parent.n_obs, 5))
+    manager = MagicMock()
+    manager.get_object.return_value = parent
+
+    with pytest.raises(ValueError, match="BBKNN batch key 'sample' not found"):
+        neighbors_rule(
+            manager,
+            "pca-node",
+            integration_method="bbknn",
+            integration_batch_key="sample",
+        )
+
+
+def test_combat_still_changes_expression_before_pca():
+    parent = _make_test_adata()
+    parent.obs["sample"] = ["a"] * 15 + ["b"] * 15
+    manager = MagicMock()
+    manager.get_object.return_value = parent
+
+    def shift_expression(adata, key, inplace):
+        assert key == "sample"
+        assert inplace is True
+        adata.X += 1
+
+    with patch("project.sc_pipeline.sc_rules.sc.pp.combat", side_effect=shift_expression) as combat:
+        result, result_type, result_key = batch_correct_rule(
+            manager,
+            "hvg-node",
+            batch_correction_method="combat",
+            combat_key="sample",
+        )
+
+    combat.assert_called_once()
+    assert not np.array_equal(result.X, parent.X)
+    np.testing.assert_array_equal(parent.X, _make_test_adata().X)
+    assert result.uns["batch_correction"] == {"method": "combat", "key": "sample"}
+    assert result_type == "new_object"
+    assert result_key == "combat_sample"
+    registry = create_default_registry()
+    assert registry.get("scale").requires == ["batch_correct"]
+    assert registry.get("pca").requires == ["scale"]
+
+
+def test_runner_resolves_integration_methods(tmp_path):
+    with temp_context(str(tmp_path)) as ctx:
+        runner = get_runner(ctx=ctx, config={"storage_dir": str(tmp_path / "dag")}, force_new=True)
+
+        single = runner.normalize_request(target_stage="neighbors", data_path="single.h5ad")
+        assert single.params["integration_method"] == "none"
+        assert single.params["batch_correction_method"] == "none"
+
+        multi = runner.normalize_request(
+            target_stage="neighbors",
+            data_paths=["a.h5ad", "b.h5ad"],
+        )
+        assert multi.params["integration_method"] == "bbknn"
+        assert multi.params["integration_batch_key"] == "sample"
+        assert multi.params["batch_correction_method"] == "none"
+
+        explicit_none = runner.normalize_request(
+            target_stage="neighbors",
+            data_paths=["a.h5ad", "b.h5ad"],
+            integration_method="none",
+        )
+        assert explicit_none.params["integration_method"] == "none"
+
+        explicit_bbknn = runner.normalize_request(
+            target_stage="neighbors",
+            data_path="single.h5ad",
+            integration_method="bbknn",
+            integration_batch_key="donor",
+        )
+        assert explicit_bbknn.params["integration_method"] == "bbknn"
+        assert explicit_bbknn.params["integration_batch_key"] == "donor"
+
+        combat = runner.normalize_request(
+            target_stage="neighbors",
+            data_path="single.h5ad",
+            integration_method="combat",
+            integration_batch_key="donor",
+        )
+        assert combat.params["integration_method"] == "none"
+        assert combat.params["batch_correction_method"] == "combat"
+        assert combat.params["combat_key"] == "donor"
+
+        legacy_combat = runner.normalize_request(
+            target_stage="neighbors",
+            data_paths=["a.h5ad", "b.h5ad"],
+            batch_correction_method="combat",
+        )
+        assert legacy_combat.params["integration_method"] == "none"
+        assert legacy_combat.params["batch_correction_method"] == "combat"
+        assert legacy_combat.params["combat_key"] == "sample"
+
+        with pytest.raises(ValueError, match="Conflicting integration choices"):
+            runner.normalize_request(
+                target_stage="neighbors",
+                data_paths=["a.h5ad", "b.h5ad"],
+                integration_method="bbknn",
+                batch_correction_method="combat",
+            )
+
+
 class FakeResponse:
     def raise_for_status(self):
         return None
@@ -84,6 +256,7 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
 
         assert adata1 is not None
         assert "Stage 'cluster' complete." in summary1
+        assert "Integration: none" in summary1
         assert node1 in runner.manager.graph.nodes
         assert json.loads((dag_dir / "graph.json").read_text(encoding="utf-8"))["active_node_id"] == node1
 
@@ -216,6 +389,130 @@ def test_strict_lookup_accepts_legacy_missing_none_param(tmp_path):
     assert manager.find_node_strict("hvg", **full_params) == "hvg"
 
 
+def test_legacy_neighbors_without_integration_params_remain_reusable(tmp_path):
+    data_path = tmp_path / "source.h5ad"
+    data_path.write_text("source fingerprint", encoding="utf-8")
+    manager = SCStateManager(storage_dir=str(tmp_path / "dag"), registry=create_default_registry())
+    full_params = {
+        "data_path": str(data_path),
+        "sample_key": "sample",
+        "scrublet_batch_key": None,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_threshold": None,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_filter_doublets": False,
+        "scrublet_skip_on_failure": True,
+        "qc_min_genes": 200,
+        "qc_max_genes": 2500,
+        "qc_mt_pct": 5,
+        "min_cells": 3,
+        "target_sum": 10000.0,
+        "n_hvg": 2000,
+        "hvg_flavor": "seurat",
+        "hvg_batch_key": None,
+        "batch_correction_method": "none",
+        "combat_key": None,
+        "max_scale_value": 10,
+        "regress_out": True,
+        "n_comps": 50,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "use_rep": "X_pca",
+        "integration_method": "none",
+        "integration_batch_key": None,
+    }
+    actions = ["raw", "scrublet", "qc", "normalize", "hvg", "batch_correct", "scale", "pca", "neighbors"]
+    raw_hash = compute_step_hash(manager, "raw", "init", full_params)
+    for index, action in enumerate(actions):
+        if action == "raw":
+            params = {"data_path": str(data_path)}
+        else:
+            params = {key: full_params.get(key) for key in manager.registry.get(action).param_keys}
+            if action == "neighbors":
+                params.pop("integration_method")
+                params.pop("integration_batch_key")
+        manager.graph.add_node(action, action=action, params=params, hash=raw_hash if action == "raw" else None)
+        if index:
+            manager.graph.add_edge(actions[index - 1], action)
+
+    assert manager.find_node_strict("neighbors", **full_params) == "neighbors"
+
+
+def test_neighbor_integration_branches_after_shared_pca(tmp_path):
+    manager = SCStateManager(storage_dir=str(tmp_path / "dag"), registry=create_default_registry())
+    parent = _make_test_adata()
+    parent.obs["sample"] = ["a"] * 15 + ["b"] * 15
+    parent.obsm["X_pca"] = np.ones((parent.n_obs, 5))
+    pca_node = manager.register_new_object(
+        parent,
+        parent_id=None,
+        action="pca",
+        params={"n_comps": 5},
+        hash_val="pca-hash",
+        result_key="X_pca",
+    )
+
+    with temp_context(str(tmp_path)) as ctx:
+        runner = SingleCellPipelineRunner(ctx=ctx, manager=manager, registry=manager.registry)
+        with (
+            patch("project.sc_pipeline.sc_rules.sc.pp.neighbors"),
+            patch("project.sc_pipeline.sc_rules.sc.external.pp.bbknn"),
+        ):
+            ordinary_node = runner.run_rule(
+                "neighbors",
+                pca_node,
+                n_neighbors=5,
+                n_pcs=5,
+                use_rep="X_pca",
+                integration_method="none",
+                integration_batch_key="sample",
+            )
+            bbknn_node = runner.run_rule(
+                "neighbors",
+                pca_node,
+                n_neighbors=5,
+                n_pcs=5,
+                use_rep="X_pca",
+                integration_method="bbknn",
+                integration_batch_key="sample",
+            )
+            reused_bbknn = runner.run_rule(
+                "neighbors",
+                pca_node,
+                n_neighbors=5,
+                n_pcs=5,
+                use_rep="X_pca",
+                integration_method="bbknn",
+                integration_batch_key="sample",
+            )
+
+    assert ordinary_node != bbknn_node
+    assert reused_bbknn == bbknn_node
+    assert list(manager.graph.predecessors(ordinary_node)) == [pca_node]
+    assert list(manager.graph.predecessors(bbknn_node)) == [pca_node]
+
+    none_batch_hash = compute_step_hash(
+        manager,
+        "batch_correct",
+        "hvg-hash",
+        {"batch_correction_method": "none", "combat_key": "sample", "integration_method": "none"},
+    )
+    bbknn_batch_hash = compute_step_hash(
+        manager,
+        "batch_correct",
+        "hvg-hash",
+        {"batch_correction_method": "none", "combat_key": "sample", "integration_method": "bbknn"},
+    )
+    combat_batch_hash = compute_step_hash(
+        manager,
+        "batch_correct",
+        "hvg-hash",
+        {"batch_correction_method": "combat", "combat_key": "sample"},
+    )
+    assert none_batch_hash == bbknn_batch_hash
+    assert combat_batch_hash != none_batch_hash
+
+
 def test_ambiguous_cache_match_rebuilds_from_exact_ancestor():
     runner = object.__new__(SingleCellPipelineRunner)
     runner.ctx = MagicMock()
@@ -270,3 +567,4 @@ def test_plugin_uses_session_specific_storage(tmp_path):
         call(ctx=contexts[0], config=config, storage_dir=str(storage_root / "chat-a")),
         call(ctx=contexts[1], config=config, storage_dir=str(storage_root / "chat-b")),
     ]
+    assert all(item.kwargs["integration_method"] == "auto" for item in runner.execute.call_args_list)

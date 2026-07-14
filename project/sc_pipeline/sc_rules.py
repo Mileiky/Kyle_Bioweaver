@@ -42,7 +42,7 @@ class RuleRegistry:
         return self.rules[name]
 
 
-def scrublet_rule( # understand what this is doing, what is scrublet
+def scrublet_rule(
     mgr: Any,
     parent_id: str,
     scrublet_batch_key: str = None,
@@ -52,13 +52,10 @@ def scrublet_rule( # understand what this is doing, what is scrublet
     scrublet_filter_doublets: bool = False,
     scrublet_skip_on_failure: bool = True,
 ):
-    """Run Scrublet on a parent copy when the pipeline runner reaches this stage."""
+    """Run Scanpy Scrublet on an immutable copy of the raw parent node."""
     adata = mgr.get_object(parent_id).copy()
-
-    if scrublet_batch_key is not None and scrublet_batch_key not in adata.obs:
-        raise ValueError(f"scrublet_batch_key '{scrublet_batch_key}' not found in adata.obs.")
-
     effective_n_prin_comps = max(1, min(scrublet_n_prin_comps, adata.n_obs - 1, adata.n_vars - 1))
+
     try:
         sc.pp.scrublet(
             adata,
@@ -74,26 +71,12 @@ def scrublet_rule( # understand what this is doing, what is scrublet
         adata.uns["scrublet"] = {
             "status": "skipped",
             "error": str(exc),
-            "batch_key": scrublet_batch_key,
-            "expected_doublet_rate": scrublet_expected_doublet_rate,
-            "threshold": scrublet_threshold,
-            "n_prin_comps": effective_n_prin_comps,
         }
         return adata, "new_object", "scrublet_skipped"
 
     if scrublet_filter_doublets:
-        if "predicted_doublet" not in adata.obs:
-            raise ValueError("Scrublet did not produce adata.obs['predicted_doublet'].")
         adata = adata[~adata.obs["predicted_doublet"].astype(bool)].copy()
 
-    adata.uns["scrublet"] = {
-        "status": "completed",
-        "batch_key": scrublet_batch_key,
-        "expected_doublet_rate": scrublet_expected_doublet_rate,
-        "threshold": scrublet_threshold,
-        "n_prin_comps": effective_n_prin_comps,
-        "filtered_doublets": scrublet_filter_doublets,
-    }
     result_key = "scrublet_filtered" if scrublet_filter_doublets else "scrublet"
     return adata, "new_object", result_key
 
@@ -199,9 +182,22 @@ def neighbors_rule(
     n_neighbors: int = 10,
     n_pcs: int = 40,
     use_rep: str = "X_pca",
+    integration_method: str = "none",
+    integration_batch_key: str = None,
 ):
-    """Build Scanpy's neighbor graph for the pipeline runner."""
+    """Build an ordinary or BBKNN neighbor graph after PCA."""
     adata = mgr.get_object(parent_id).copy()
+    if integration_method == "bbknn":
+        if not integration_batch_key or integration_batch_key not in adata.obs:
+            raise ValueError(
+                f"BBKNN batch key '{integration_batch_key}' not found in adata.obs."
+            )
+        sc.external.pp.bbknn(adata, batch_key=integration_batch_key)
+        return adata, "new_object", "neighbors"
+
+    if integration_method != "none":
+        raise ValueError("neighbors integration_method must be 'none' or 'bbknn'.")
+
     effective_n_pcs = n_pcs
     if use_rep in adata.obsm:
         effective_n_pcs = min(n_pcs, adata.obsm[use_rep].shape[1])
@@ -306,7 +302,7 @@ def annotation_rule(
     mgr: Any,
     parent_id: str,
     groupby: str = None,
-    annotation_model: str = "qwen3.5:122b",
+    annotation_model: str = "gemma4:26b-mlx-bf16",
     annotation_api_base: str = "http://localhost:11434/v1",
     annotation_api_key: str = "ollama",
     n_annotation_markers: int = 10,

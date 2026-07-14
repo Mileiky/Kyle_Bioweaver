@@ -10,7 +10,7 @@ description: >-
   adata.uns["cell_type_annotation"].
 
 examples:
-  adata = run_cell_type_annotation(adata, groupby="leiden_res0.7", model="qwen3.5:122b")
+  adata = run_cell_type_annotation(adata, groupby="leiden_res0.7", model="gemma4:26b-mlx-bf16")
 
 parameters:
   - name: adata
@@ -29,7 +29,7 @@ parameters:
   - name: model
     type: str
     required: false
-    default: qwen3.5:122b
+    default: gemma4:26b-mlx-bf16
     description: Name of the local or OpenAI-compatible chat model used for annotation.
 
   - name: api_base
