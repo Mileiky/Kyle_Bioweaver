@@ -12,24 +12,13 @@ import scanpy as sc
 
 
 class SingleCellIO:
-    """
-    Handle raw-data IO, result visualization, and artifact creation.
-
-    Constructed by `SingleCellPipelineRunner` in sc_run and called after a DAG
-    node is selected or executed. It reads datasets, creates plots, writes
-    TaskWeaver artifacts, and produces user-facing summaries.
-    """
+    """Load input data and publish plots and artifacts for the pipeline runner."""
 
     def __init__(self, ctx: Any):
         self.ctx = ctx
 
     def coerce_optional_list(self, value: Any):
-        """
-        Normalize flexible list-like user input into a Python list or `None`.
-
-        Called by request normalization in sc_run before source inference and
-        raw-data loading.
-        """
+        """Turn TaskWeaver list input into a list for runner normalization."""
         if value is None:
             return None
         if isinstance(value, str):
@@ -43,23 +32,13 @@ class SingleCellIO:
         return list(value)
 
     def read_input_data(self, data_path: str):
-        """
-        Read a single input dataset from a file or 10x directory.
-
-        Called by sc_run when a raw node must be created from user-provided
-        input data.
-        """
+        """Load one file or 10x directory for the pipeline runner."""
         if os.path.isdir(data_path):
             return sc.read_10x_mtx(data_path, var_names="gene_symbols", cache=False)
         return sc.read(data_path)
 
     def read_multi_input_data(self, data_paths, sample_ids, sample_key, join):
-        """
-        Read and concatenate multiple input datasets into one AnnData object.
-
-        Called by sc_run for multi-sample raw-node creation. It stores the
-        source dataset metadata in `adata.uns["multi_sample"]`.
-        """
+        """Load and concatenate the samples supplied to the pipeline runner."""
         adatas = {}
         for data_path, sample_id in zip(data_paths, sample_ids):
             adata = self.read_input_data(data_path)
@@ -83,19 +62,13 @@ class SingleCellIO:
         return combined
 
     def visualize_result(self, mgr: Any, node_id: str, stage: str):
-        """
-        Render the main result plot, final UMAP, DAG, and summary for a node.
-
-        Called by sc_run after an exact cache hit or a completed execution path.
-        It updates `mgr.active_node_id`, writes TaskWeaver artifact files, and
-        returns the active AnnData object plus a text summary.
-        """
+        """Publish plots and a summary after the runner selects its result node."""
         mgr.active_node_id = node_id
         mgr.save()
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
 
-        fig = plt.figure(figsize=(6, 5))
+        initial_fig = fig = plt.figure(figsize=(6, 5))
         if stage == "scrublet":
             if "doublet_score" in adata.obs:
                 sc.pl.scrublet_score_distribution(adata, show=False)
@@ -107,10 +80,7 @@ class SingleCellIO:
             else:
                 self.draw_center_message(plt.gca(), "Scrublet scores not found")
             plt.title(f"{stage.upper()} Result (Node: {node_id})")
-        elif stage == "qc":
-            sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
-            plt.title(f"{stage.upper()} Result (Node: {node_id})")
-        elif stage == "normalize":
+        elif stage in {"qc", "normalize"}:
             sc.pl.violin(adata, ["total_counts", "n_genes_by_counts"], jitter=0.4, show=False)
             plt.title(f"{stage.upper()} Result (Node: {node_id})")
         elif stage == "hvg":
@@ -153,6 +123,9 @@ class SingleCellIO:
             self.draw_center_message(plt.gca(), f"{stage} complete\nshape={adata.shape}")
             plt.title(f"{stage.upper()} Result (Node: {node_id})")
 
+        fig = plt.gcf()
+        if fig is not initial_fig:
+            plt.close(initial_fig)
         self.create_artifact_from_figure(
             fig=fig,
             name="Analysis_Result",
@@ -184,12 +157,7 @@ class SingleCellIO:
         ax.set_axis_off()
 
     def plot_batch_correction_result(self, mgr: Any, node_id: str):
-        """
-        Plot before/after PCA panels for the batch-correction stage.
-
-        Called by `visualize_result()` when the active stage is
-        `batch_correct`.
-        """
+        """Plot before/after PCA panels for `visualize_result`."""
         node_meta = mgr.graph.nodes[node_id]
         adata_after = mgr.get_object(node_id)
         parent_ids = list(mgr.graph.predecessors(node_id))
@@ -267,12 +235,7 @@ class SingleCellIO:
             return None, f"PCA plot unavailable: {exc}"
 
     def plot_final_umap(self, mgr: Any, node_id: str, stage: str) -> None:
-        """
-        Persist a final UMAP artifact for downstream stages that already have an embedding.
-
-        Called by `visualize_result()` for all stages except the direct UMAP and
-        cluster views, which already use UMAP as the main result plot.
-        """
+        """Publish a final UMAP for downstream stages that already have an embedding."""
         if stage in {"umap", "cluster"}:
             return
 
@@ -282,7 +245,7 @@ class SingleCellIO:
 
         color_key = self.get_umap_color_key(mgr, node_id, adata)
 
-        plt.figure(figsize=(6, 5))
+        initial_fig = plt.figure(figsize=(6, 5))
         if color_key is not None:
             sc.pl.umap(adata, color=color_key, show=False)
         else:
@@ -290,6 +253,8 @@ class SingleCellIO:
         plt.title(f"Final UMAP (Node: {node_id})")
 
         fig = plt.gcf()
+        if fig is not initial_fig:
+            plt.close(initial_fig)
         self.create_artifact_from_figure(
             fig=fig,
             name="Final_UMAP",
@@ -304,7 +269,7 @@ class SingleCellIO:
         if result_key in adata.obs:
             return result_key
 
-        lineage = list(mgr.ancestors(node_id)) + [node_id]
+        lineage = mgr.lineage_to_node(node_id)
         for ancestor_id in reversed(lineage):
             ancestor_key = mgr.graph.nodes[ancestor_id].get("result_key")
             if ancestor_key in adata.obs:
@@ -321,15 +286,11 @@ class SingleCellIO:
         return None
 
     def summary(self, mgr: Any, node_id: str, stage: str) -> str:
-        """
-        Build the user-facing summary string for the active node.
-
-        Called by sc_run after visualization is complete.
-        """
+        """Build the result summary returned by the pipeline runner."""
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
         result_key = node_meta.get("result_key")
-        lineage = list(mgr.ancestors(node_id)) + [node_id]
+        lineage = mgr.ancestors_including_self(node_id)
         return (
             f"Stage '{stage}' complete.\n"
             f"- Active node: {node_id}\n"
@@ -340,22 +301,22 @@ class SingleCellIO:
         )
 
     def plot_dag(self, mgr: Any, current_node: str) -> None:
-        """
-        Draw the current cached pipeline DAG and save it as an artifact.
-
-        Called by `visualize_result()` after the main result plot has been
-        written.
-        """
+        """Publish the cached DAG after `visualize_result` draws the main plot."""
         if not mgr.graph.nodes:
             return
 
         pos = self.pipeline_dag_layout(mgr, current_node)
-        active_lineage = self.active_lineage(mgr, current_node)
-        max_secondary_depth = max((self.secondary_depth(y) for _, y in pos.values()), default=0)
+        active_lineage = mgr.ancestors_including_self(current_node)
+        branch_rows = len({y for _, y in pos.values() if y < 0})
 
         width = min(15, max(10, len({x for x, _ in pos.values()}) * 1.15))
-        height = min(8, max(4.8, 3.2 + max_secondary_depth * 0.9))
+        height = min(12, max(4.8, 3.4 + branch_rows * 1.05))
         fig, ax = plt.subplots(figsize=(width, height))
+
+        stages_in_graph = {attr.get("action", "?") for _, attr in mgr.graph.nodes(data=True)}
+        for stage, x in self.stage_columns(mgr).items():
+            if stage in stages_in_graph:
+                ax.axvline(x, color="#edf1f5", linewidth=0.7, zorder=0)
 
         active_edges = {
             (u, v)
@@ -408,6 +369,7 @@ class SingleCellIO:
             ys,
             s=1900,
             c=node_colors,
+            marker="o",
             edgecolors=edgecolors,
             linewidths=linewidths,
             zorder=2,
@@ -416,12 +378,14 @@ class SingleCellIO:
         labels = {}
         for node_id, attr in mgr.graph.nodes(data=True):
             action = attr.get("action", "?")
+            short_id = node_id.removeprefix("node_")[:4]
+            display_action = action.replace("_", "\n")
             params = attr.get("params", {})
             details = self.dag_label_details(action, params)
             if node_id in active_lineage or node_id == current_node:
-                labels[node_id] = f"[{node_id[:4]}]\n{action}{details}"
+                labels[node_id] = f"[{short_id}]\n{display_action}{details}"
             else:
-                labels[node_id] = f"[{node_id[:4]}]\n{action}"
+                labels[node_id] = f"[{short_id}]\n{display_action}"
 
         stage_y = max(y for _, y in pos.values()) + 0.65
         for node_id, label in labels.items():
@@ -462,43 +426,45 @@ class SingleCellIO:
         )
 
     def pipeline_dag_layout(self, mgr: Any, current_node: str) -> Dict[str, tuple[float, float]]:
-        """Compute a left-to-right DAG layout organized by pipeline stage."""
-        active_lineage = self.active_lineage(mgr, current_node)
+        """Align the active path and keep each cached branch on a stable row."""
+        active_lineage = mgr.ancestors_including_self(current_node)
         stage_columns = self.stage_columns(mgr)
-        stage_nodes: Dict[str, list[str]] = {}
-        for node_id, attr in mgr.graph.nodes(data=True):
-            stage = attr.get("action", "?")
-            stage_nodes.setdefault(stage, []).append(node_id)
+        inactive_nodes = set(mgr.graph.nodes) - active_lineage
+        branch_ends = [
+            node_id
+            for node_id in inactive_nodes
+            if not any(child_id in inactive_nodes for child_id in mgr.graph.successors(node_id))
+        ]
+        branch_ends.sort(
+            key=lambda node_id: (
+                self.same_source_priority(mgr, current_node, node_id),
+                mgr.raw_ancestor(node_id) or "",
+                tuple(mgr.lineage_to_node(node_id)),
+            )
+        )
+        branch_rows = {
+            node_id: -1.4 - index * 1.15
+            for index, node_id in enumerate(branch_ends)
+        }
 
         pos = {}
-        for stage, nodes in stage_nodes.items():
-            x = stage_columns.get(stage, len(stage_columns))
-            active_nodes = [node_id for node_id in nodes if node_id in active_lineage]
-            inactive_nodes = [node_id for node_id in nodes if node_id not in active_lineage]
+        for node_id, attr in mgr.graph.nodes(data=True):
+            stage = attr.get("action", "?")
+            x = stage_columns.get(stage, len(stage_columns) * 1.25)
+            if node_id in active_lineage:
+                pos[node_id] = (x, 0.0)
+                continue
 
-            active_nodes = sorted(
-                active_nodes,
-                key=lambda node_id: (
-                    0 if node_id == current_node else 1,
-                    self.active_lineage_rank(mgr, current_node, node_id),
-                    node_id,
+            descendants = mgr.descendants(node_id)
+            branch_end = next(
+                (
+                    end_id
+                    for end_id in branch_ends
+                    if end_id == node_id or end_id in descendants
                 ),
+                None,
             )
-            inactive_nodes = sorted(
-                inactive_nodes,
-                key=lambda node_id: (
-                    self.same_source_priority(mgr, current_node, node_id),
-                    self.lineage_branch_sort_key(mgr, node_id),
-                    node_id,
-                ),
-            )
-
-            for idx, node_id in enumerate(active_nodes):
-                pos[node_id] = (x, idx * 0.85)
-
-            for idx, node_id in enumerate(inactive_nodes):
-                row = idx + 1
-                pos[node_id] = (x, -1.45 - (row - 1) * 1.0)
+            pos[node_id] = (x, branch_rows.get(branch_end, -1.4))
 
         return pos
 
@@ -522,47 +488,11 @@ class SingleCellIO:
         ordered_stages.extend(extra_stages)
         return {stage: idx * 1.25 for idx, stage in enumerate(ordered_stages)}
 
-    def active_lineage(self, mgr: Any, current_node: str) -> set[str]:
-        """Return the current node and all of its ancestors."""
-        if current_node not in mgr.graph.nodes:
-            return set()
-        return set(mgr.ancestors(current_node)) | {current_node}
-
-    def lineage_branch_sort_key(self, mgr: Any, node_id: str) -> int:
-        """Sort inactive branches by descendant count so denser branches stay near the top."""
-        descendants = mgr.descendants(node_id)
-        return -len(descendants)
-
-    def active_lineage_rank(self, mgr: Any, current_node: str, node_id: str) -> int:
-        """Rank nodes according to their order along the current raw-to-active path."""
-        raw_id = self.raw_ancestor(mgr, current_node)
-        lineage = list(mgr.shortest_path(source=raw_id, target=current_node))
-        try:
-            return lineage.index(node_id)
-        except ValueError:
-            return len(lineage)
-
     def same_source_priority(self, mgr: Any, current_node: str, node_id: str) -> int:
         """Prefer DAG branches rooted in the same raw dataset as the active node."""
-        current_raw = self.raw_ancestor(mgr, current_node)
-        node_raw = self.raw_ancestor(mgr, node_id)
+        current_raw = mgr.raw_ancestor(current_node)
+        node_raw = mgr.raw_ancestor(node_id)
         return 0 if current_raw == node_raw else 1
-
-    def raw_ancestor(self, mgr: Any, node_id: str) -> Optional[str]:
-        """Return the upstream raw node for a DAG node."""
-        if node_id not in mgr.graph.nodes:
-            return None
-        lineage = list(mgr.ancestors(node_id)) + [node_id]
-        for ancestor_id in reversed(lineage):
-            if mgr.graph.nodes[ancestor_id].get("action") == "raw":
-                return ancestor_id
-        return node_id
-
-    def secondary_depth(self, y_value: float) -> int:
-        """Translate negative row offsets into a compact branch-depth estimate."""
-        if y_value >= 0:
-            return 0
-        return int(round(abs(y_value + 1.45) / 1.0)) + 1
 
     def dag_label_details(self, action: str, params: Dict[str, Any]) -> str:
         """Add concise stage-specific parameter hints to highlighted DAG node labels."""

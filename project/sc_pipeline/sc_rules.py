@@ -13,17 +13,11 @@ import scanpy as sc
 
 @dataclass
 class Rule:
-    """
-    Describe one pipeline stage and its callable implementation.
-
-    Constructed by `create_default_registry()` and consumed by sc_run and sc_dag
-    for dependency planning, parameter filtering, cache identity, and execution.
-    """
+    """Describe a stage for the runner and state manager."""
 
     name: str
     requires: List[str]
     func: Callable[..., Any]
-    virtual: bool = False
 
     def __post_init__(self) -> None:
         sig = inspect.signature(self.func)
@@ -32,12 +26,7 @@ class Rule:
 
 
 class RuleRegistry:
-    """
-    Hold registered pipeline rules keyed by stage name.
-
-    Attached to `SCStateManager` in sc_run and used by the runner, DAG hash
-    functions, and dependency resolution.
-    """
+    """Keep stage rules in one mapping used by the runner and state manager."""
 
     def __init__(self) -> None:
         self.rules: Dict[str, Rule] = {}
@@ -52,12 +41,8 @@ class RuleRegistry:
             raise ValueError(f"Rule '{name}' is not registered.")
         return self.rules[name]
 
-    def has(self, name: str) -> bool:
-        """Check whether a stage name is registered."""
-        return name in self.rules
 
-
-def scrublet_rule(
+def scrublet_rule( # understand what this is doing, what is scrublet
     mgr: Any,
     parent_id: str,
     scrublet_batch_key: str = None,
@@ -67,13 +52,7 @@ def scrublet_rule(
     scrublet_filter_doublets: bool = False,
     scrublet_skip_on_failure: bool = True,
 ):
-    """
-    Run Scrublet on raw counts and optionally remove predicted doublets.
-
-    Called by `run_rule()` in sc_run. It reads the parent AnnData from the state
-    manager, returns a new AnnData object, and records Scrublet metadata in
-    `adata.uns["scrublet"]`.
-    """
+    """Run Scrublet on a parent copy when the pipeline runner reaches this stage."""
     adata = mgr.get_object(parent_id).copy()
 
     if scrublet_batch_key is not None and scrublet_batch_key not in adata.obs:
@@ -127,12 +106,7 @@ def qc_filter_rule(
     qc_mt_pct: float = 5,
     min_cells: int = 3,
 ):
-    """
-    Apply QC filtering and compute standard QC metrics.
-
-    Called by `run_rule()` in sc_run. It returns a filtered AnnData copy and
-    updates `adata.obs` and `adata.var` with QC annotations.
-    """
+    """Filter genes and cells when the pipeline runner reaches the QC stage."""
     adata = mgr.get_object(parent_id).copy()
     sc.pp.filter_genes(adata, min_cells=min_cells)
     adata.var["mt"] = adata.var_names.str.startswith(("MT-", "mt-"))
@@ -145,12 +119,7 @@ def qc_filter_rule(
 
 
 def normalize_rule(mgr: Any, parent_id: str, target_sum: float = 1e4):
-    """
-    Normalize counts, log-transform, and preserve the normalized snapshot as `raw`.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object with
-    normalized expression values.
-    """
+    """Normalize and log-transform a parent copy for the pipeline runner."""
     adata = mgr.get_object(parent_id).copy()
     sc.pp.normalize_total(adata, target_sum=target_sum)
     sc.pp.log1p(adata)
@@ -165,12 +134,7 @@ def hvg_rule(
     hvg_flavor: str = "seurat",
     hvg_batch_key: str = None,
 ):
-    """
-    Select highly variable genes and subset the matrix to them.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object restricted
-    to the selected HVGs.
-    """
+    """Select highly variable genes when the pipeline runner reaches this stage."""
     adata = mgr.get_object(parent_id).copy()
     if hvg_batch_key is not None and hvg_batch_key not in adata.obs:
         raise ValueError(f"hvg_batch_key '{hvg_batch_key}' not found in adata.obs.")
@@ -191,12 +155,7 @@ def batch_correct_rule(
     combat_key: str = None,
     sample_key: str = "sample",
 ):
-    """
-    Apply optional batch correction after HVG selection.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object and stores
-    batch-correction metadata under `adata.uns["batch_correction"]`.
-    """
+    """Apply the requested batch correction to a parent copy for the runner."""
     adata = mgr.get_object(parent_id).copy()
     method = (batch_correction_method or "none").lower()
 
@@ -216,11 +175,7 @@ def batch_correct_rule(
 
 
 def scale_rule(mgr: Any, parent_id: str, max_scale_value: int = 10, regress_out: bool = True):
-    """
-    Regress nuisance covariates and scale the expression matrix.
-
-    Called by `run_rule()` in sc_run. It returns a new scaled AnnData object.
-    """
+    """Regress available QC covariates and scale a parent copy for the runner."""
     adata = mgr.get_object(parent_id).copy()
     if regress_out:
         regressors = [key for key in ["total_counts", "pct_counts_mt"] if key in adata.obs]
@@ -231,12 +186,7 @@ def scale_rule(mgr: Any, parent_id: str, max_scale_value: int = 10, regress_out:
 
 
 def pca_rule(mgr: Any, parent_id: str, n_comps: int = 50):
-    """
-    Compute PCA on the scaled matrix.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object with
-    `adata.obsm["X_pca"]`.
-    """
+    """Compute PCA when the pipeline runner reaches this stage."""
     adata = mgr.get_object(parent_id).copy()
     effective_n_comps = max(1, min(n_comps, adata.n_obs - 1, adata.n_vars - 1))
     sc.tl.pca(adata, n_comps=effective_n_comps, svd_solver="arpack")
@@ -250,12 +200,7 @@ def neighbors_rule(
     n_pcs: int = 40,
     use_rep: str = "X_pca",
 ):
-    """
-    Build the nearest-neighbor graph for downstream embedding and clustering.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object with the
-    neighbor graph in `adata.uns` and `adata.obsp`.
-    """
+    """Build Scanpy's neighbor graph for the pipeline runner."""
     adata = mgr.get_object(parent_id).copy()
     effective_n_pcs = n_pcs
     if use_rep in adata.obsm:
@@ -265,25 +210,14 @@ def neighbors_rule(
 
 
 def umap_rule(mgr: Any, parent_id: str, min_dist: float = 0.5, spread: float = 1.0):
-    """
-    Compute a UMAP embedding from the neighbor graph.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object with
-    `adata.obsm["X_umap"]`.
-    """
+    """Compute UMAP from the parent neighbor graph for the pipeline runner."""
     adata = mgr.get_object(parent_id).copy()
     sc.tl.umap(adata, min_dist=min_dist, spread=spread)
     return adata, "new_object", "X_umap"
 
 
 def cluster_rule(mgr: Any, parent_id: str, resolution: float = 0.5, cluster_method: str = "leiden"):
-    """
-    Cluster cells from the UMAP-ready state without mutating the parent node.
-
-    Called by `run_rule()` in sc_run. It operates on a copy so the parent UMAP
-    node remains unchanged, and returns a virtual lineage node keyed by the new
-    cluster assignment column.
-    """
+    """Cluster a parent copy so the pipeline runner does not mutate the UMAP node."""
     adata = mgr.get_object(parent_id).copy()
     key_added = f"{cluster_method}_res{resolution}"
 
@@ -312,12 +246,7 @@ def markers_rule(
     marker_method: str = "wilcoxon",
     n_marker_genes: int = 25,
 ):
-    """
-    Rank marker genes for each cluster or grouping.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object with the
-    ranking stored under a stage-specific `adata.uns` key.
-    """
+    """Rank marker genes for the group selected by the pipeline runner."""
     adata = mgr.get_object(parent_id).copy()
     if groupby is None:
         groupby = mgr.graph.nodes[parent_id].get("result_key")
@@ -337,12 +266,7 @@ def markers_rule(
 
 
 def extract_cluster_markers(adata: Any, groupby: str, marker_key: str, n_markers: int) -> Dict[str, List[str]]:
-    """
-    Convert rank_genes_groups output into a cluster-to-marker-gene mapping.
-
-    Called by `annotation_rule()` when assembling the prompt payload for the
-    annotation backend.
-    """
+    """Build the cluster-to-gene mapping used by `annotation_rule`."""
     markers = sc.get.rank_genes_groups_df(adata, group=None, key=marker_key)
 
     cluster_markers = {}
@@ -359,11 +283,7 @@ def extract_cluster_markers(adata: Any, groupby: str, marker_key: str, n_markers
 
 
 def parse_annotation_response(content: str) -> Dict[str, str]:
-    """
-    Parse a JSON or JSON-wrapped model response into cluster annotations.
-
-    Called by `annotation_rule()` after the API response is returned.
-    """
+    """Parse the annotation backend's JSON response for `annotation_rule`."""
     content = content.strip()
     try:
         parsed = json.loads(content)
@@ -391,13 +311,7 @@ def annotation_rule(
     annotation_api_key: str = "ollama",
     n_annotation_markers: int = 10,
 ):
-    """
-    Annotate clusters with a chat-completions backend using top marker genes.
-
-    Called by `run_rule()` in sc_run. It returns a new AnnData object with
-    `adata.obs["cell_type"]` and annotation metadata in `adata.uns`, while the
-    API key remains runtime-only and is not intended for persistence.
-    """
+    """Annotate cluster markers when the runner reaches the annotation stage."""
     adata = mgr.get_object(parent_id).copy()
     marker_key = mgr.graph.nodes[parent_id].get("result_key")
 
@@ -477,12 +391,7 @@ def annotation_rule(
 
 
 def create_default_registry() -> RuleRegistry:
-    """
-    Build the default deterministic single-cell stage registry.
-
-    Called by `get_runner()` in sc_run when the shared pipeline manager is
-    constructed.
-    """
+    """Build the ordered stage registry used by the runner and state manager."""
     registry = RuleRegistry()
     registry.register(Rule("scrublet", ["raw"], scrublet_rule))
     registry.register(Rule("qc", ["scrublet"], qc_filter_rule))
@@ -493,7 +402,7 @@ def create_default_registry() -> RuleRegistry:
     registry.register(Rule("pca", ["scale"], pca_rule))
     registry.register(Rule("neighbors", ["pca"], neighbors_rule))
     registry.register(Rule("umap", ["neighbors"], umap_rule))
-    registry.register(Rule("cluster", ["umap"], cluster_rule, virtual=True))
+    registry.register(Rule("cluster", ["umap"], cluster_rule))
     registry.register(Rule("markers", ["cluster"], markers_rule))
     registry.register(Rule("annotation", ["markers"], annotation_rule))
     return registry

@@ -6,9 +6,9 @@ import hashlib
 import json
 import os
 import uuid
-from collections import deque
-from typing import Any, Dict, Iterable, Optional
+from typing import Any, Dict, Optional
 
+import networkx as nx
 import scanpy as sc
 
 
@@ -21,9 +21,7 @@ RUNTIME_ONLY_PARAM_KEYS = {"annotation_api_key"}
 
 def _json_ready(value: Any) -> Any:
     """Convert values to a stable JSON-friendly representation for hashing and persistence."""
-    if isinstance(value, tuple):
-        return [_json_ready(item) for item in value]
-    if isinstance(value, list):
+    if isinstance(value, (tuple, list)):
         return [_json_ready(item) for item in value]
     if isinstance(value, dict):
         return {str(key): _json_ready(val) for key, val in value.items()}
@@ -33,11 +31,7 @@ def _json_ready(value: Any) -> Any:
 def _sanitize_params(params: Optional[Dict[str, Any]]) -> Dict[str, Any]:
     """Remove runtime-only data such as API keys before storing or hashing parameters."""
     params = params or {}
-    return {
-        key: _json_ready(value)
-        for key, value in params.items()
-        if key not in RUNTIME_ONLY_PARAM_KEYS
-    }
+    return {key: _json_ready(value) for key, value in params.items() if key not in RUNTIME_ONLY_PARAM_KEYS}
 
 
 def file_fingerprint(path: Optional[str]) -> Dict[str, Any]:
@@ -136,13 +130,8 @@ class SCStateManager:
     """Own the pipeline DAG, cached AnnData objects, and persistence on disk."""
 
     def __init__(self, storage_dir: str = DEFAULT_STORAGE_DIR, registry: Any = None):
-        """
-        Manage the persistent cache for pipeline nodes.
-
-        Called by `SingleCellPipelineRunner` in sc_run. It stores DAG metadata,
-        object references, cache hashes, and the active node for the current process.
-        """
-        self.graph = SimpleDiGraph()
+        """Load the persistent graph and objects used by `SingleCellPipelineRunner`."""
+        self.graph = nx.DiGraph()
         self.objects: Dict[str, Any] = {}
         self.registry = registry
         self.hash_index: Dict[str, str] = {}
@@ -153,17 +142,8 @@ class SCStateManager:
         self._dirty_objects: set[str] = set()
         self.load()
 
-    def set_registry(self, registry: Any) -> None:
-        """Attach the rule registry after construction to avoid circular imports."""
-        self.registry = registry
-
     def _new_id(self) -> str:
         return str(uuid.uuid4())[:8]
-
-    def _register_node(self, node_id: str, hash_val: Optional[str], **attr: Any) -> None:
-        self.graph.add_node(node_id, hash=hash_val, **attr)
-        if hash_val is not None:
-            self.hash_index[hash_val] = node_id
 
     def register_new_object(
         self,
@@ -175,21 +155,15 @@ class SCStateManager:
         result_key: Optional[str] = None,
         is_virtual: bool = False,
     ) -> str:
-        """
-        Register an immutable node backed by its own AnnData object.
-
-        Called by `run_rule()` and `register_raw()` in sc_run. It creates a new
-        object ref, stores sanitized parameters, updates the hash index, and saves
-        the DAG state.
-        """
+        """Store an immutable AnnData snapshot created by the pipeline runner."""
         obj_ref = f"obj_{self._new_id()}"
         self.objects[obj_ref] = adata
         self._dirty_objects.add(obj_ref)
 
         node_id = f"node_{self._new_id()}"
-        self._register_node(
+        self.graph.add_node(
             node_id,
-            hash_val,
+            hash=hash_val,
             action=action,
             params=_sanitize_params(params),
             obj_ref=obj_ref,
@@ -197,36 +171,12 @@ class SCStateManager:
             result_key=result_key,
             shape=list(adata.shape),
         )
+        if hash_val is not None:
+            self.hash_index[hash_val] = node_id
         if parent_id:
             self.graph.add_edge(parent_id, node_id)
         self.save()
         return node_id
-
-    def register_virtual_node(
-        self,
-        adata: Any,
-        parent_id: str,
-        action: str,
-        params: Dict[str, Any],
-        result_key: str,
-        hash_val: Optional[str] = None,
-    ) -> str:
-        """
-        Register a lineage node that is logically virtual but still keeps its own object snapshot.
-
-        Called by `run_rule()` for rules such as clustering. The `is_virtual`
-        metadata is preserved for DAG rendering, while the object copy keeps
-        parent results immutable.
-        """
-        return self.register_new_object(
-            adata=adata,
-            parent_id=parent_id,
-            action=action,
-            params=params,
-            hash_val=hash_val,
-            result_key=result_key,
-            is_virtual=True,
-        )
 
     def get_object(self, node_id: str) -> Any:
         """Fetch the AnnData object for a DAG node."""
@@ -236,13 +186,7 @@ class SCStateManager:
         return self.objects[obj_ref]
 
     def save(self) -> None:
-        """
-        Persist the graph and any new or changed AnnData objects to disk.
-
-        Called after node registration and from tests that want an explicit save.
-        Object writes are tracked so repeated graph saves do not rewrite every
-        cached AnnData file.
-        """
+        """Write graph metadata and newly registered objects to the cache directory."""
         os.makedirs(self.object_dir, exist_ok=True)
 
         for obj_ref in sorted(self._dirty_objects):
@@ -252,7 +196,7 @@ class SCStateManager:
 
         graph_data = {
             "nodes": [
-                {"id": node_id, **self._json_safe_attrs(attr)}
+                {"id": node_id, **_json_ready(attr)}
                 for node_id, attr in self.graph.nodes(data=True)
             ],
             "edges": [[src, dst] for src, dst in self.graph.edges()],
@@ -266,12 +210,7 @@ class SCStateManager:
         os.replace(tmp_path, self.graph_path)
 
     def load(self) -> None:
-        """
-        Restore the saved DAG and object cache from disk if present.
-
-        Called from `__init__`. It preserves compatibility with the prior graph
-        format by accepting missing `active_node_id` and tuple-like values.
-        """
+        """Load the saved graph, including files that predate `active_node_id`."""
         if not os.path.exists(self.graph_path):
             return
 
@@ -304,17 +243,8 @@ class SCStateManager:
             if os.path.exists(object_path):
                 self.objects[obj_ref] = sc.read_h5ad(object_path)
 
-    def _json_safe_attrs(self, attrs: Dict[str, Any]) -> Dict[str, Any]:
-        """Normalize node attributes for graph JSON persistence."""
-        return {key: _json_ready(value) for key, value in attrs.items()}
-
     def dependency_chain(self, target_stage: str) -> list[str]:
-        """
-        Return the linear upstream dependency path for a target stage.
-
-        Called by cache lookup, execution planning, and DAG plotting. It walks
-        through the rule registry and returns stages starting at `raw`.
-        """
+        """Return the raw-to-target stages used by cache lookup and the runner."""
         if target_stage == "raw":
             return ["raw"]
         if self.registry is None:
@@ -336,18 +266,12 @@ class SCStateManager:
         return chain
 
     def find_node_smart(self, target_stage: str, **user_params: Any) -> tuple[Any, str]:
-        """
-        Find an exact or partial cached node for a request.
-
-        Called by sc_run before any new execution. It first checks the full
-        lineage hash and then falls back to stage-local fuzzy matching using the
-        target rule's parameter surface.
-        """
+        """Find an exact or stage-local cache match for the pipeline runner."""
         strict_id = self.find_node_strict(target_stage, **user_params)
         if strict_id:
             return strict_id, "exact_match"
 
-        if self.registry is None or not self.registry.has(target_stage):
+        if self.registry is None or target_stage not in self.registry.rules:
             return None, "no_match"
 
         target_rule = self.registry.get(target_stage)
@@ -372,11 +296,7 @@ class SCStateManager:
         return candidates, "ambiguous"
 
     def find_node_strict(self, target_stage: str, **full_params: Any) -> Optional[str]:
-        """
-        Resolve the full lineage hash for a request and return the cached node ID.
-
-        Called by sc_run during exact-match lookup and ancestor selection.
-        """
+        """Find the node whose complete lineage matches the runner's parameters."""
         chain = self.dependency_chain(target_stage)
         current_hash = "init"
         for stage in chain:
@@ -436,119 +356,27 @@ class SCStateManager:
             current_id = predecessors[0] if predecessors else None
         return list(reversed(lineage))
 
-    def ancestors_including_self(self, node_id: str) -> Iterable[str]:
-        """Return the node lineage from all ancestors through the node itself."""
-        return list(self.ancestors(node_id)) + [node_id]
+    def ancestors_including_self(self, node_id: str) -> set[str]:
+        """Return the node and every ancestor queried through NetworkX."""
+        return self.ancestors(node_id) | {node_id}
 
     def raw_ancestor(self, node_id: str) -> Optional[str]:
         """Return the upstream raw node for a lineage."""
         if node_id not in self.graph.nodes:
             return None
-        lineage = self.ancestors_including_self(node_id)
-        for ancestor_id in reversed(lineage):
+        for ancestor_id in self.lineage_to_node(node_id):
             if self.graph.nodes[ancestor_id].get("action") == "raw":
                 return ancestor_id
         return node_id
 
     def ancestors(self, node_id: str) -> set[str]:
-        """Return all ancestors of a node in the DAG."""
-        visited = set()
-        stack = list(self.graph.predecessors(node_id))
-        while stack:
-            current = stack.pop()
-            if current in visited:
-                continue
-            visited.add(current)
-            stack.extend(self.graph.predecessors(current))
-        return visited
+        """Return all ancestors using NetworkX."""
+        return nx.ancestors(self.graph, node_id)
 
     def descendants(self, node_id: str) -> set[str]:
-        """Return all descendants of a node in the DAG."""
-        visited = set()
-        stack = list(self.graph.successors(node_id))
-        while stack:
-            current = stack.pop()
-            if current in visited:
-                continue
-            visited.add(current)
-            stack.extend(self.graph.successors(current))
-        return visited
+        """Return all descendants using NetworkX."""
+        return nx.descendants(self.graph, node_id)
 
     def shortest_path(self, source: str, target: str) -> list[str]:
-        """Return the shortest directed path between two DAG nodes."""
-        queue = deque([[source]])
-        seen = {source}
-        while queue:
-            path = queue.popleft()
-            node_id = path[-1]
-            if node_id == target:
-                return path
-            for child_id in self.graph.successors(node_id):
-                if child_id not in seen:
-                    seen.add(child_id)
-                    queue.append(path + [child_id])
-        raise ValueError(f"No path found from {source} to {target}.")
-
-
-class NodeView:
-    """Minimal node-view API compatible with this pipeline's usage patterns."""
-
-    def __init__(self, graph: "SimpleDiGraph"):
-        self._graph = graph
-
-    def __call__(self, data: bool = False):
-        if data:
-            return list(self._graph._nodes.items())
-        return list(self._graph._nodes.keys())
-
-    def __iter__(self):
-        return iter(self._graph._nodes.keys())
-
-    def __contains__(self, node_id: str) -> bool:
-        return node_id in self._graph._nodes
-
-    def __getitem__(self, node_id: str) -> Dict[str, Any]:
-        return self._graph._nodes[node_id]
-
-    def __len__(self) -> int:
-        return len(self._graph._nodes)
-
-
-class SimpleDiGraph:
-    """Small directed-graph implementation for cache metadata and plotting."""
-
-    def __init__(self) -> None:
-        self._nodes: Dict[str, Dict[str, Any]] = {}
-        self._succ: Dict[str, set[str]] = {}
-        self._pred: Dict[str, set[str]] = {}
-        self.nodes = NodeView(self)
-
-    def add_node(self, node_id: str, **attr: Any) -> None:
-        self._nodes.setdefault(node_id, {})
-        self._succ.setdefault(node_id, set())
-        self._pred.setdefault(node_id, set())
-        self._nodes[node_id].update(attr)
-
-    def add_edge(self, src: str, dst: str) -> None:
-        self.add_node(src)
-        self.add_node(dst)
-        self._succ[src].add(dst)
-        self._pred[dst].add(src)
-
-    def add_edges_from(self, edges: Iterable[Iterable[str]]) -> None:
-        for src, dst in edges:
-            self.add_edge(src, dst)
-
-    def clear(self) -> None:
-        self._nodes.clear()
-        self._succ.clear()
-        self._pred.clear()
-
-    def edges(self):
-        return [(src, dst) for src, dsts in self._succ.items() for dst in dsts]
-
-    def predecessors(self, node_id: str):
-        return list(self._pred.get(node_id, set()))
-
-    def successors(self, node_id: str):
-        return list(self._succ.get(node_id, set()))
+        """Return the shortest directed path using NetworkX."""
+        return nx.shortest_path(self.graph, source=source, target=target)

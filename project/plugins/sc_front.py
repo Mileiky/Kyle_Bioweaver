@@ -1,7 +1,8 @@
-# from __future__ import annotations
+import os
 
 from taskweaver.plugin import Plugin, register_plugin
 
+from project.sc_pipeline.sc_dag import DEFAULT_STORAGE_DIR
 from project.sc_pipeline.sc_run import get_runner
 
 
@@ -50,19 +51,19 @@ class SingleCellPipeline(Plugin):
         n_annotation_markers: int = 10,
         **kwargs,
     ):
-        """
-        Execute the single-cell pipeline and returns `(AnnData, summary)`.
-        """
+        """Run the single-cell pipeline when TaskWeaver calls this plugin."""
         try:
-            runner = get_runner(ctx=self.ctx, config=self.config)
+            storage_root = self.config.get("storage_dir", DEFAULT_STORAGE_DIR)
+            storage_dir = os.path.join(storage_root, self.ctx.session_id)
+            runner = get_runner(ctx=self.ctx, config=self.config, storage_dir=storage_dir)
             return runner.execute(
                 target_stage=target_stage,
                 data_path=data_path,
                 data_paths=data_paths,
                 sample_ids=sample_ids,
                 sample_key=sample_key,
-                multi_sample_join=multi_sample_join, # multi-sample needs to line up with scanpy docs
-                scrublet_batch_key=scrublet_batch_key, # READ MORE ON SCRUBLET
+                multi_sample_join=multi_sample_join,
+                scrublet_batch_key=scrublet_batch_key,
                 scrublet_expected_doublet_rate=scrublet_expected_doublet_rate,
                 scrublet_threshold=scrublet_threshold,
                 scrublet_n_prin_comps=scrublet_n_prin_comps,
@@ -77,7 +78,7 @@ class SingleCellPipeline(Plugin):
                 hvg_flavor=hvg_flavor,
                 hvg_batch_key=hvg_batch_key,
                 batch_correction_method=batch_correction_method,
-                combat_key=combat_key, # what is combat (MUST LEARN)
+                combat_key=combat_key,
                 max_scale_value=max_scale_value,
                 regress_out=regress_out,
                 n_comps=n_comps,
@@ -98,4 +99,4 @@ class SingleCellPipeline(Plugin):
                 **kwargs,
             )
         except Exception as exc:
-            raise RuntimeError(f"Single cell pipeline failed: {exc}") from exc
+            raise RuntimeError(f"Single-cell pipeline failed: {exc}") from exc

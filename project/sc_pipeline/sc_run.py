@@ -1,7 +1,5 @@
 """Pipeline orchestration for the single-cell TaskWeaver plugin."""
 
-from __future__ import annotations # boilerplate
-
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -12,51 +10,14 @@ from project.sc_pipeline.sc_rules import RuleRegistry, create_default_registry
 
 @dataclass
 class PipelineRequest:
-    """
-    Normalize one plugin invocation into a stable orchestration request.
-
-    Built by `SingleCellPipelineRunner.execute()` in this module and passed to
-    cache lookup, raw-node creation, and execution planning.
-    """
+    """Hold the normalized target and parameters used throughout one run."""
 
     target_stage: str
     params: Dict[str, Any]
 
 
-@dataclass
-class PlanStep:
-    """
-    Represent one pipeline stage that must be executed from a cached ancestor.
-
-    Produced by `build_execution_path()` and consumed by `ensure()` and
-    `execute_step()` in this module.
-    """
-
-    stage: str
-
-
-@dataclass
-class PipelineResult:
-    """
-    Carry the final DAG node selection and cache-match metadata for a request.
-
-    Returned internally by `execute()` before visualization turns it into the
-    plugin response tuple.
-    """
-
-    node_id: str
-    match_type: str
-
-
 class SingleCellPipelineRunner:
-    """
-    Coordinate request validation, cache reuse, and stage execution.
-
-    Constructed by `get_runner()` and called by the TaskWeaver plugin wrapper in
-    `project/plugins/sc_front.py`. It owns the state manager, default registry,
-    request normalization, raw-node registration, cache lookup, and final result
-    coordination.
-    """
+    """Coordinate cache lookup and stage execution for the TaskWeaver plugin."""
 
     def __init__(
         self,
@@ -74,29 +35,16 @@ class SingleCellPipelineRunner:
             storage_dir=storage_dir or self.config.get("storage_dir", DEFAULT_STORAGE_DIR),
             registry=self.registry,
         )
-        self.manager.set_registry(self.registry)
+        self.manager.registry = self.registry
 
     def execute(self, target_stage: str, **kwargs: Any):
-        """
-        Fulfill one plugin request from cache or by executing missing stages.
-
-        Called by the TaskWeaver plugin wrapper in `sc_front.py`. It normalizes
-        the request, locates an exact or partial cache hit, creates raw nodes if
-        needed, executes the remaining stages, and delegates final visualization
-        to `SingleCellIO`.
-        """
+        """Run or reuse a pipeline result, then let `SingleCellIO` publish it."""
         request = self.normalize_request(target_stage=target_stage, **kwargs)
-        result = self.resolve_request(request)
-        return self.io.visualize_result(self.manager, result.node_id, request.target_stage)
+        node_id = self.resolve_request(request)
+        return self.io.visualize_result(self.manager, node_id, request.target_stage)
 
     def normalize_request(self, target_stage: str, **kwargs: Any) -> PipelineRequest:
-        """
-        Normalize user inputs and fill in inferred source defaults.
-
-        Called only by `execute()`. It validates the target stage, coerces
-        optional list arguments, infers active raw-source parameters, and builds
-        the parameter dictionary shared across cache lookup and execution.
-        """
+        """Validate plugin input and build the parameter set used by `execute`."""
         mgr = self.manager
         data_path = kwargs.get("data_path")
         data_paths = self.io.coerce_optional_list(kwargs.get("data_paths"))
@@ -145,7 +93,8 @@ class SingleCellPipelineRunner:
                     combat_key = sample_key
 
         valid_stages = set(mgr.registry.rules.keys()) | {"raw"}
-        self.validate_target_stage(target_stage, valid_stages)
+        if target_stage not in valid_stages:
+            raise ValueError(f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}")
 
         params = {
             "data_path": data_path,
@@ -194,23 +143,14 @@ class SingleCellPipelineRunner:
 
         return PipelineRequest(target_stage=target_stage, params=params)
 
-    def validate_target_stage(self, target_stage: str, valid_stages: set[str]) -> None:
-        """Validate that the requested target stage is registered and reachable."""
-        if target_stage not in valid_stages:
-            raise ValueError(f"Unknown target_stage '{target_stage}'. Valid stages: {sorted(valid_stages)}")
-
     def infer_active_source_params(self) -> Optional[Dict[str, Any]]:
-        """
-        Infer the active raw source parameters from the DAG or active node.
-
-        Called by `normalize_request()` when the user omits input paths.
-        """
+        """Find raw input parameters when `normalize_request` receives no path."""
         mgr = self.manager
         active_node_id = getattr(mgr, "active_node_id", None)
         if active_node_id in mgr.graph.nodes:
-            source_params = self.source_params_for_lineage(active_node_id)
-            if source_params:
-                return source_params
+            raw_node_id = mgr.raw_ancestor(active_node_id)
+            if raw_node_id is not None:
+                return mgr.graph.nodes[raw_node_id].get("params", {})
 
         raw_nodes = [node_id for node_id, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
         if len(raw_nodes) == 1:
@@ -218,23 +158,8 @@ class SingleCellPipelineRunner:
 
         return None
 
-    def source_params_for_lineage(self, node_id: str) -> Optional[Dict[str, Any]]:
-        """Return the raw-node params for the lineage ending at `node_id`."""
-        lineage = list(self.manager.ancestors(node_id)) + [node_id]
-        for lineage_node_id in reversed(lineage):
-            node_meta = self.manager.graph.nodes[lineage_node_id]
-            if node_meta.get("action") == "raw":
-                return node_meta.get("params", {})
-        return None
-
-    def resolve_request(self, request: PipelineRequest) -> PipelineResult:
-        """
-        Resolve a request against cache and execute any missing stages.
-
-        Called only by `execute()`. It handles exact and partial node lookup,
-        nearest-compatible ancestor selection, and final execution-path
-        construction.
-        """
+    def resolve_request(self, request: PipelineRequest) -> str:
+        """Return the exact cached node or build missing stages for `execute`."""
         mgr = self.manager
         self.ctx.log(
             "info",
@@ -245,7 +170,7 @@ class SingleCellPipelineRunner:
 
         if match_type == "exact_match":
             self.ctx.log("info", "sc_pipeline", f"Exact lineage match found: {result_node_id}")
-            return PipelineResult(node_id=result_node_id, match_type=match_type)
+            return result_node_id
 
         if match_type == "ambiguous":
             self.ctx.log(
@@ -263,23 +188,13 @@ class SingleCellPipelineRunner:
             start_state=start_node_id,
             **request.params,
         )
-        return PipelineResult(node_id=final_node_id, match_type=match_type)
+        return final_node_id
 
     def select_nearest_compatible_ancestor(self, request: PipelineRequest) -> Optional[str]:
-        """
-        Find the closest valid cached ancestor for a target request.
-
-        Called by `resolve_request()` before raw-node creation. It walks the
-        upstream dependency chain from near-target back toward raw and returns
-        the first strict lineage match.
-        """
+        """Find the nearest exact cached ancestor before `resolve_request` rebuilds."""
         mgr = self.manager
         self.ctx.log("info", "sc_pipeline", "Locating nearest valid cached ancestor.")
-        try:
-            ancestor_chain = list(reversed(mgr.dependency_chain(request.target_stage)[:-1]))
-        except Exception:
-            ancestor_chain = []
-
+        ancestor_chain = reversed(mgr.dependency_chain(request.target_stage)[:-1])
         for stage in ancestor_chain:
             node_id = mgr.find_node_strict(stage, **request.params)
             if node_id:
@@ -288,11 +203,7 @@ class SingleCellPipelineRunner:
         return None
 
     def register_or_reuse_raw_node(self, request: PipelineRequest) -> str:
-        """
-        Reuse an exact raw node or load input data and register a new one.
-
-        Called by `resolve_request()` when no cached ancestor is suitable.
-        """
+        """Reuse raw data or load it when `resolve_request` has no cached ancestor."""
         mgr = self.manager
         params = request.params
         target_raw_hash = compute_step_hash(mgr, "raw", "init", params)
@@ -325,12 +236,8 @@ class SingleCellPipelineRunner:
 
         raise ValueError("No data found and no valid parent state exists. Provide data_path.")
 
-    def build_execution_path(self, target: str, start_stage: str) -> list[PlanStep]:
-        """
-        Build the missing stage sequence between a cached start state and target.
-
-        Called by `ensure()` when a request needs new execution.
-        """
+    def build_execution_path(self, target: str, start_stage: str) -> list[str]:
+        """List the stage names that `ensure` must run after a cached stage."""
         if target == "raw":
             return []
         dependency_chain = self.manager.dependency_chain(target)
@@ -338,16 +245,10 @@ class SingleCellPipelineRunner:
             start_index = dependency_chain.index(start_stage)
         except ValueError as exc:
             raise ValueError(f"Start stage '{start_stage}' is not compatible with target '{target}'.") from exc
-        return [PlanStep(stage=stage) for stage in dependency_chain[start_index + 1 :]]
+        return dependency_chain[start_index + 1 :]
 
     def run_rule(self, rule_name: str, parent_id: str, **params: Any) -> str:
-        """
-        Execute one registered rule or reuse its exact cached child node.
-
-        Called by `ensure()`. It computes the step hash, filters parameters to
-        the rule contract, invokes the rule implementation from sc_rules, and
-        registers the returned AnnData snapshot in sc_dag.
-        """
+        """Run one rule for `ensure`, or reuse the child with the same step hash."""
         mgr = self.manager
         parent_hash = mgr.graph.nodes[parent_id].get("hash", "init") if parent_id else "init"
         hash_val = compute_step_hash(mgr, rule_name, parent_hash, params)
@@ -357,37 +258,33 @@ class SingleCellPipelineRunner:
 
         rule = mgr.registry.get(rule_name)
         rule_params = {key: value for key, value in params.items() if key in rule.param_keys}
-        result = rule.func(mgr, parent_id, **rule_params)
+        adata, result_type, *result_keys = rule.func(mgr, parent_id, **rule_params)
+        result_key = result_keys[0] if result_keys else None
 
-        if result[1] == "new_object":
-            result_key = result[2] if len(result) > 2 else None
+        if result_type == "new_object":
             return mgr.register_new_object(
-                adata=result[0],
+                adata=adata,
                 parent_id=parent_id,
                 action=rule_name,
                 params=rule_params,
                 hash_val=hash_val,
                 result_key=result_key,
             )
-        if result[1] == "virtual":
-            return mgr.register_virtual_node(
-                adata=result[0],
+        if result_type == "virtual":
+            return mgr.register_new_object(
+                adata=adata,
                 parent_id=parent_id,
                 action=rule_name,
                 params=rule_params,
-                result_key=result[2],
+                result_key=result_key,
                 hash_val=hash_val,
+                is_virtual=True,
             )
 
-        raise ValueError(f"Unknown rule result type: {result[1]}")
+        raise ValueError(f"Unknown rule result type: {result_type}")
 
     def ensure(self, target: str, start_state: str, **params: Any) -> str:
-        """
-        Materialize the requested target stage from a cached start node.
-
-        Called by `resolve_request()` after ancestor selection. It builds the
-        execution path and runs each missing stage in order.
-        """
+        """Run each missing stage after the cached node chosen by `resolve_request`."""
         if target == "raw":
             return start_state
 
@@ -398,27 +295,12 @@ class SingleCellPipelineRunner:
 
         plan = self.build_execution_path(target=target, start_stage=current_action)
         current_node = start_state
-        for step in plan:
-            current_node = self.execute_step(current_node, step, params)
+        for stage in plan:
+            current_node = self.run_rule(stage, current_node, **params)
         return current_node
 
-    def execute_step(self, parent_id: str, step: PlanStep, params: Dict[str, Any]) -> str:
-        """
-        Execute one registered pipeline rule against a parent DAG node.
-
-        Called by `ensure()` in sc_run. It retrieves the parent AnnData object
-        through `SCStateManager` only indirectly via the rule, obtains the rule
-        from `RuleRegistry`, executes it, and registers the returned result in
-        sc_dag. Returns the new or cached node ID.
-        """
-        return self.run_rule(step.stage, parent_id, **params)
-
     def register_raw(self, adata: Any, path: Optional[str], params: Optional[Dict[str, Any]] = None) -> str:
-        """
-        Register a raw data node or reuse an existing exact raw cache entry.
-
-        Called by `register_or_reuse_raw_node()` after file loading.
-        """
+        """Register loaded raw data, including calls from the legacy v4 shim."""
         raw_params = params or {"data_path": path}
         hash_val = compute_step_hash(self.manager, "raw", "init", raw_params)
         if hash_val in self.manager.hash_index:
@@ -433,7 +315,6 @@ class SingleCellPipelineRunner:
 
 
 _RUNNER: Optional[SingleCellPipelineRunner] = None
-_RUNNER_KEY: Optional[tuple[str, int]] = None
 
 
 def get_runner(
@@ -442,25 +323,20 @@ def get_runner(
     storage_dir: Optional[str] = None,
     force_new: bool = False,
 ) -> SingleCellPipelineRunner:
-    """
-    Return the shared pipeline runner used by the TaskWeaver plugin.
-
-    Called by `SingleCellPipeline.__call__()` in `project/plugins/sc_front.py`
-    and by tests that need an isolated runner. By default it preserves the
-    prior single-manager behavior.
-    """
-    global _RUNNER, _RUNNER_KEY
+    """Return the shared runner for one TaskWeaver context and storage directory."""
+    global _RUNNER
 
     config = config or {}
     resolved_storage_dir = storage_dir or config.get("storage_dir", DEFAULT_STORAGE_DIR)
-    key = (resolved_storage_dir, id(ctx))
-    if force_new or _RUNNER is None or _RUNNER_KEY != key:
+    if (
+        force_new
+        or _RUNNER is None
+        or _RUNNER.ctx is not ctx
+        or _RUNNER.manager.storage_dir != resolved_storage_dir
+    ):
         _RUNNER = SingleCellPipelineRunner(
             ctx=ctx,
             config=config,
             storage_dir=resolved_storage_dir,
         )
-        _RUNNER_KEY = key
     return _RUNNER
-
-

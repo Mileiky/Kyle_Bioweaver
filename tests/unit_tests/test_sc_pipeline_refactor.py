@@ -1,8 +1,10 @@
 import json
 import os
 import sys
-from unittest.mock import MagicMock, patch
+from unittest.mock import MagicMock, call, patch
 
+import matplotlib.image as mpimg
+import networkx as nx
 import numpy as np
 import pandas as pd
 import pytest
@@ -44,6 +46,12 @@ def _base_params(data_path):
     }
 
 
+def _assert_artifact_is_not_blank(ctx, name):
+    artifact = next(item for item in reversed(ctx._artifacts) if item["name"] == name)
+    image = mpimg.imread(os.path.join(ctx._temp_dir, artifact["file_name"]))
+    assert float(image[..., :3].std()) > 0.01
+
+
 class FakeResponse:
     def raise_for_status(self):
         return None
@@ -68,6 +76,7 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
     with temp_context(str(tmp_path)) as ctx:
         runner = get_runner(ctx=ctx, config={"storage_dir": str(dag_dir)}, force_new=True)
         params = _base_params(str(data_path))
+        assert isinstance(runner.manager.graph, nx.DiGraph)
 
         adata1, summary1 = runner.execute(target_stage="cluster", **params)
         node1 = runner.manager.active_node_id
@@ -99,6 +108,8 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert node3 != node1
         assert len(runner.manager.graph.nodes) == graph_size_1 + 1
         assert "leiden_res0.8" in adata3.obs
+        assert "leiden_res0.4" not in runner.manager.get_object(umap_node).obs
+        assert "leiden_res0.8" not in runner.manager.get_object(umap_node).obs
 
         runner.manager.save()
         reloaded = SCStateManager(storage_dir=str(dag_dir), registry=create_default_registry())
@@ -109,9 +120,11 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         artifact_names = [artifact["name"] for artifact in ctx._artifacts]
         assert "Analysis_Result" in artifact_names
         assert "Pipeline_State" in artifact_names
+        _assert_artifact_is_not_blank(ctx, "Analysis_Result")
 
     with temp_context(str(tmp_path)) as ctx:
         plugin = SingleCellPipeline(name="sc_front", ctx=ctx, config={"storage_dir": str(dag_dir)})
+        session_dag_dir = dag_dir / ctx.session_id
         with patch("project.sc_pipeline.sc_rules.requests.post", return_value=FakeResponse()):
             adata4, summary4 = plugin(
                 target_stage="annotation",
@@ -134,10 +147,35 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert "Stage 'annotation' complete." in summary4
         assert "cell_type" in adata4.obs
         assert any(artifact["name"] == "Final_UMAP" for artifact in ctx._artifacts)
+        _assert_artifact_is_not_blank(ctx, "Analysis_Result")
+        _assert_artifact_is_not_blank(ctx, "Final_UMAP")
 
-        graph_text = (dag_dir / "graph.json").read_text(encoding="utf-8")
+        graph_text = (session_dag_dir / "graph.json").read_text(encoding="utf-8")
         assert "annotation_api_key" not in graph_text
         assert "top-secret-token" not in graph_text
+
+
+def test_multi_sample_loading_and_runner_reuse(tmp_path):
+    paths = [tmp_path / "sample_a.h5ad", tmp_path / "sample_b.h5ad"]
+    for path in paths:
+        _make_test_adata().write_h5ad(path)
+
+    dag_dir = tmp_path / "dag_cache"
+    config = {"storage_dir": str(dag_dir)}
+    with temp_context(str(tmp_path)) as ctx:
+        runner = get_runner(ctx=ctx, config=config, force_new=True)
+        assert get_runner(ctx=ctx, config=config) is runner
+
+        adata, summary = runner.execute(
+            target_stage="raw",
+            data_paths=[str(path) for path in paths],
+            sample_ids=["sample_a", "sample_b"],
+        )
+
+        assert adata.n_obs == 60
+        assert set(adata.obs["sample"].astype(str)) == {"sample_a", "sample_b"}
+        assert adata.uns["multi_sample"]["sample_ids"] == ["sample_a", "sample_b"]
+        assert "Stage 'raw' complete." in summary
 
 
 def test_strict_lookup_accepts_legacy_missing_none_param(tmp_path):
@@ -190,7 +228,7 @@ def test_ambiguous_cache_match_rebuilds_from_exact_ancestor():
 
     result = runner.resolve_request(request)
 
-    assert result.node_id == "rebuilt-target"
+    assert result == "rebuilt-target"
     runner.ensure.assert_called_once_with(
         target="umap",
         start_state="exact-ancestor",
@@ -200,10 +238,35 @@ def test_ambiguous_cache_match_rebuilds_from_exact_ancestor():
 
 
 def test_plugin_raises_pipeline_failures():
-    plugin = SingleCellPipeline(name="sc_front", ctx=MagicMock(), config={})
+    ctx = MagicMock()
+    ctx.session_id = "test-session"
+    plugin = SingleCellPipeline(name="sc_front", ctx=ctx, config={})
     runner = MagicMock()
     runner.execute.side_effect = ValueError("invalid pipeline request")
 
     with patch("project.plugins.sc_front.get_runner", return_value=runner):
         with pytest.raises(RuntimeError, match="Single-cell pipeline failed: invalid pipeline request"):
             plugin(target_stage="umap", data_path="/data/source")
+
+
+def test_plugin_uses_session_specific_storage(tmp_path):
+    storage_root = tmp_path / "dag_cache"
+    config = {"storage_dir": str(storage_root)}
+    contexts = [MagicMock(), MagicMock()]
+    contexts[0].session_id = "chat-a"
+    contexts[1].session_id = "chat-b"
+    runner = MagicMock()
+    runner.execute.return_value = (None, "complete")
+
+    with patch("project.plugins.sc_front.get_runner", return_value=runner) as get_runner_mock:
+        plugin_a = SingleCellPipeline(name="sc_front", ctx=contexts[0], config=config)
+        plugin_b = SingleCellPipeline(name="sc_front", ctx=contexts[1], config=config)
+        plugin_a(target_stage="raw", data_path="/data/source")
+        plugin_a(target_stage="raw", data_path="/data/source")
+        plugin_b(target_stage="raw", data_path="/data/source")
+
+    assert get_runner_mock.call_args_list == [
+        call(ctx=contexts[0], config=config, storage_dir=str(storage_root / "chat-a")),
+        call(ctx=contexts[0], config=config, storage_dir=str(storage_root / "chat-a")),
+        call(ctx=contexts[1], config=config, storage_dir=str(storage_root / "chat-b")),
+    ]
