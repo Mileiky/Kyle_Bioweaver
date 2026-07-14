@@ -329,7 +329,7 @@ def get_runner(
     config = config or {}
     resolved_storage_dir = storage_dir or config.get("storage_dir", DEFAULT_STORAGE_DIR)
     if (
-        force_new
+        force_new # Logic to create a new runner 
         or _RUNNER is None
         or _RUNNER.ctx is not ctx
         or _RUNNER.manager.storage_dir != resolved_storage_dir
@@ -340,3 +340,4 @@ def get_runner(
             storage_dir=resolved_storage_dir,
         )
     return _RUNNER
+
