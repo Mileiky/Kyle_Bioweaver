@@ -27,8 +27,9 @@ description: >-
   For requests like "change the UMAP resolution to 0.7", call target_stage="cluster"
   or target_stage="markers" with resolution=0.7 so the final UMAP is colored by
   the updated clusters.
-  Always provide data_path on the first run for a dataset. Later calls may omit
-  data_path if exactly one raw dataset is already loaded.
+  Always provide data_path or data_paths on the first run. Later calls may omit
+  the data input and unchanged parameters; they inherit the active DAG lineage.
+  Pass a parameter again only when the user wants to change it and create a branch.
   Cell-type annotation is available as target_stage="annotation". It uses marker
   genes from the markers stage and sends the top markers for each cluster to a
   local Ollama/OpenAI-compatible chat-completions model. Predicted labels are
@@ -43,7 +44,7 @@ examples:
   adata, summary = sc_front(target_stage="cluster", resolution=0.8)
   adata, summary = sc_front(target_stage="cluster", resolution=0.7)
   adata, summary = sc_front(target_stage="markers", n_marker_genes=25)
-  adata, summary = sc_front(target_stage="annotation", annotation_model="gemma4:26b-mlx-bf16")
+  adata, summary = sc_front(target_stage="annotation", annotation_model="qwen3.5:122b")
 
 parameters:
   - name: target_stage
@@ -275,7 +276,7 @@ parameters:
   - name: annotation_model
     type: str
     required: false
-    default: gemma4:26b-mlx-bf16
+    default: qwen3.5:122b
     description: Local Ollama/OpenAI-compatible chat model used for cell-type annotation.
 
   - name: annotation_api_base

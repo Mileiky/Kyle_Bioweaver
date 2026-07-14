@@ -46,6 +46,12 @@ class SingleCellPipelineRunner:
     def normalize_request(self, target_stage: str, **kwargs: Any) -> PipelineRequest:
         """Validate plugin input and build the parameter set used by `execute`."""
         mgr = self.manager
+        supplied_data_paths = self.io.coerce_optional_list(kwargs.get("data_paths"))
+        if kwargs.get("data_path") is None and not supplied_data_paths:
+            inherited_params = self.infer_active_params()
+            if inherited_params:
+                kwargs = {**inherited_params, **kwargs}
+
         data_path = kwargs.get("data_path")
         data_paths = self.io.coerce_optional_list(kwargs.get("data_paths"))
         sample_ids = self.io.coerce_optional_list(kwargs.get("sample_ids"))
@@ -161,7 +167,7 @@ class SingleCellPipelineRunner:
             "groupby": kwargs.get("groupby"),
             "marker_method": kwargs.get("marker_method", "wilcoxon"),
             "n_marker_genes": kwargs.get("n_marker_genes", 25),
-            "annotation_model": kwargs.get("annotation_model", "gemma4:26b-mlx-bf16"),
+            "annotation_model": kwargs.get("annotation_model", "qwen3.5:122b"),
             "annotation_api_base": kwargs.get("annotation_api_base", "http://localhost:11434/v1"),
             "annotation_api_key": kwargs.get("annotation_api_key", "ollama"),
             "n_annotation_markers": kwargs.get("n_annotation_markers", 10),
@@ -172,6 +178,18 @@ class SingleCellPipelineRunner:
                 params[key] = value
 
         return PipelineRequest(target_stage=target_stage, params=params)
+
+    def infer_active_params(self) -> Dict[str, Any]:
+        """Collect saved parameters from the active DAG lineage for a follow-up call."""
+        mgr = self.manager
+        active_node_id = getattr(mgr, "active_node_id", None)
+        if active_node_id not in mgr.graph.nodes:
+            return {}
+
+        params: Dict[str, Any] = {}
+        for node_id in mgr.lineage_to_node(active_node_id):
+            params.update(mgr.graph.nodes[node_id].get("params", {}))
+        return params
 
     def infer_active_source_params(self) -> Optional[Dict[str, Any]]:
         """Find raw input parameters when `normalize_request` receives no path."""

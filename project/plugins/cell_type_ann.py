@@ -10,7 +10,7 @@ class cell_type_ann(Plugin):
         self,
         adata,
         groupby="leiden_res0.7",
-        model="gemma4:26b-mlx-bf16",
+        model="qwen3.5:122b",
         api_base="http://localhost:11434/v1",
         api_key="ollama",
         n_markers=10,

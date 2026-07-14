@@ -266,20 +266,26 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert "leiden_res0.4" not in runner.manager.get_object(umap_node).obs
         assert "leiden_res0.4" in adata1.obs
 
+        _, marker_summary = runner.execute(target_stage="markers")
+        marker_node = runner.manager.active_node_id
+        assert "Stage 'markers' complete." in marker_summary
+        assert list(runner.manager.graph.predecessors(marker_node)) == [node1]
+        assert len(runner.manager.graph.nodes) == graph_size_1 + 1
+
         adata2, summary2 = runner.execute(target_stage="cluster", **params)
         node2 = runner.manager.active_node_id
         assert adata2 is not None
         assert "Stage 'cluster' complete." in summary2
         assert node2 == node1
-        assert len(runner.manager.graph.nodes) == graph_size_1
+        assert len(runner.manager.graph.nodes) == graph_size_1 + 1
 
-        params_branch = dict(params, resolution=0.8)
+        params_branch = {"resolution": 0.8}
         adata3, summary3 = runner.execute(target_stage="cluster", **params_branch)
         node3 = runner.manager.active_node_id
         assert adata3 is not None
         assert "Stage 'cluster' complete." in summary3
         assert node3 != node1
-        assert len(runner.manager.graph.nodes) == graph_size_1 + 1
+        assert len(runner.manager.graph.nodes) == graph_size_1 + 2
         assert "leiden_res0.8" in adata3.obs
         assert "leiden_res0.4" not in runner.manager.get_object(umap_node).obs
         assert "leiden_res0.8" not in runner.manager.get_object(umap_node).obs
@@ -289,6 +295,11 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert len(reloaded.graph.nodes) == len(runner.manager.graph.nodes)
         assert reloaded.get_object(node1).shape == adata1.shape
         assert reloaded.get_object(node3).shape == adata3.shape
+        reloaded_runner = SingleCellPipelineRunner(ctx=ctx, manager=reloaded, registry=reloaded.registry)
+        continued = reloaded_runner.normalize_request(target_stage="markers")
+        assert continued.params["qc_max_genes"] == params["qc_max_genes"]
+        assert continued.params["qc_mt_pct"] == params["qc_mt_pct"]
+        assert continued.params["resolution"] == 0.8
 
         artifact_names = [artifact["name"] for artifact in ctx._artifacts]
         assert "Analysis_Result" in artifact_names
@@ -319,6 +330,7 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert adata4 is not None
         assert "Stage 'annotation' complete." in summary4
         assert "cell_type" in adata4.obs
+        assert adata4.uns["cell_type_annotation"]["model"] == "qwen3.5:122b"
         assert any(artifact["name"] == "Final_UMAP" for artifact in ctx._artifacts)
         _assert_artifact_is_not_blank(ctx, "Analysis_Result")
         _assert_artifact_is_not_blank(ctx, "Final_UMAP")
@@ -567,4 +579,25 @@ def test_plugin_uses_session_specific_storage(tmp_path):
         call(ctx=contexts[0], config=config, storage_dir=str(storage_root / "chat-a")),
         call(ctx=contexts[1], config=config, storage_dir=str(storage_root / "chat-b")),
     ]
-    assert all(item.kwargs["integration_method"] == "auto" for item in runner.execute.call_args_list)
+    assert all("integration_method" not in item.kwargs for item in runner.execute.call_args_list)
+
+
+def test_plugin_forwards_only_explicit_parameters():
+    ctx = MagicMock()
+    ctx.session_id = "test-session"
+    plugin = SingleCellPipeline(name="sc_front", ctx=ctx, config={})
+    runner = MagicMock()
+    runner.execute.return_value = (None, "complete")
+
+    with patch("project.plugins.sc_front.get_runner", return_value=runner):
+        plugin(target_stage="annotation")
+
+    runner.execute.assert_called_once_with(target_stage="annotation")
+
+
+def test_annotation_defaults_to_qwen(tmp_path):
+    with temp_context(str(tmp_path)) as ctx:
+        runner = get_runner(ctx=ctx, config={"storage_dir": str(tmp_path / "dag")}, force_new=True)
+        request = runner.normalize_request(target_stage="annotation", data_path="source.h5ad")
+
+    assert request.params["annotation_model"] == "qwen3.5:122b"

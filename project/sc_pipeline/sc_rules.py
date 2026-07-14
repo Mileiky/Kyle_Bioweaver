@@ -302,7 +302,7 @@ def annotation_rule(
     mgr: Any,
     parent_id: str,
     groupby: str = None,
-    annotation_model: str = "gemma4:26b-mlx-bf16",
+    annotation_model: str = "qwen3.5:122b",
     annotation_api_base: str = "http://localhost:11434/v1",
     annotation_api_key: str = "ollama",
     n_annotation_markers: int = 10,
