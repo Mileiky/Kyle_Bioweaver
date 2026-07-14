@@ -381,7 +381,60 @@ class SCStateManager:
         current_hash = "init"
         for stage in chain:
             current_hash = compute_step_hash(self, stage, current_hash, full_params)
-        return self.hash_index.get(current_hash)
+        exact_node_id = self.hash_index.get(current_hash)
+        if exact_node_id:
+            return exact_node_id
+
+        # Cache schemas evolve as optional parameters and pipeline stages are
+        # added. Fall back to structural matching so missing and null optional
+        # values remain compatible without reusing nodes from another source or
+        # an obsolete dependency chain.
+        sanitized_params = _sanitize_params(full_params)
+        compatible_nodes = []
+        for node_id, attr in self.graph.nodes(data=True):
+            if attr.get("action") != target_stage:
+                continue
+            lineage = self.lineage_to_node(node_id)
+            if [self.graph.nodes[item].get("action") for item in lineage] != chain:
+                continue
+
+            raw_node_id = lineage[0]
+            try:
+                requested_raw_hash = compute_step_hash(self, "raw", "init", sanitized_params)
+            except (OSError, ValueError):
+                continue
+            if self.graph.nodes[raw_node_id].get("hash") != requested_raw_hash:
+                continue
+
+            for lineage_node_id in lineage[1:]:
+                node_meta = self.graph.nodes[lineage_node_id]
+                rule = self.registry.get(node_meta["action"])
+                node_params = node_meta.get("params", {})
+                if any(
+                    node_params.get(key) != sanitized_params.get(key)
+                    for key in rule.param_keys
+                ):
+                    break
+            else:
+                compatible_nodes.append(node_id)
+
+        if len(compatible_nodes) == 1:
+            return compatible_nodes[0]
+        if self.active_node_id in compatible_nodes:
+            return self.active_node_id
+        return None
+
+    def lineage_to_node(self, node_id: str) -> list[str]:
+        """Return the single ordered lineage ending at ``node_id``."""
+        lineage = []
+        current_id: Optional[str] = node_id
+        while current_id is not None:
+            lineage.append(current_id)
+            predecessors = list(self.graph.predecessors(current_id))
+            if len(predecessors) > 1:
+                return []
+            current_id = predecessors[0] if predecessors else None
+        return list(reversed(lineage))
 
     def ancestors_including_self(self, node_id: str) -> Iterable[str]:
         """Return the node lineage from all ancestors through the node itself."""

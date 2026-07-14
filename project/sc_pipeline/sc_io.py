@@ -91,6 +91,7 @@ class SingleCellIO:
         returns the active AnnData object plus a text summary.
         """
         mgr.active_node_id = node_id
+        mgr.save()
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
 

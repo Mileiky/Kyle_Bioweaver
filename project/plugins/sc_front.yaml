@@ -1,5 +1,5 @@
 # TaskWeaver manifest for sc_front.py.
-name: sc_pipeline_v4
+name: sc_front
 code: sc_front
 enabled: true
 required: false
@@ -33,13 +33,13 @@ description: >-
   adata.uns["cell_type_annotation"].
 
 examples:
-  adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
-  adata, summary = sc_pipeline_v4(data_paths=["/data/sample1", "/data/sample2"], sample_ids=["sample1", "sample2"], target_stage="markers")
-  adata, summary = sc_pipeline_v4(data_path="project/data/test_data.h5ad", target_stage="scrublet")
-  adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.8)
-  adata, summary = sc_pipeline_v4(target_stage="cluster", resolution=0.7)
-  adata, summary = sc_pipeline_v4(target_stage="markers", n_marker_genes=25)
-  adata, summary = sc_pipeline_v4(target_stage="annotation", annotation_model="qwen3.5:122b")
+  adata, summary = sc_front(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
+  adata, summary = sc_front(data_paths=["/data/sample1", "/data/sample2"], sample_ids=["sample1", "sample2"], target_stage="markers")
+  adata, summary = sc_front(data_path="project/data/test_data.h5ad", target_stage="scrublet")
+  adata, summary = sc_front(target_stage="cluster", resolution=0.8)
+  adata, summary = sc_front(target_stage="cluster", resolution=0.7)
+  adata, summary = sc_front(target_stage="markers", n_marker_genes=25)
+  adata, summary = sc_front(target_stage="annotation", annotation_model="qwen3.5:122b")
 
 parameters:
   - name: target_stage

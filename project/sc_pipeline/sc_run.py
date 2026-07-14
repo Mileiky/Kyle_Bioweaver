@@ -1,6 +1,6 @@
 """Pipeline orchestration for the single-cell TaskWeaver plugin."""
 
-from __future__ import annotations
+from __future__ import annotations # boilerplate
 
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
@@ -248,8 +248,10 @@ class SingleCellPipelineRunner:
             return PipelineResult(node_id=result_node_id, match_type=match_type)
 
         if match_type == "ambiguous":
-            raise ValueError(
-                "Ambiguous request: found multiple partial matches. Specify upstream parameters to clarify."
+            self.ctx.log(
+                "info",
+                "sc_pipeline",
+                "Multiple stage-local cache matches found; rebuilding from the nearest exact lineage ancestor.",
             )
 
         start_node_id = self.select_nearest_compatible_ancestor(request)
@@ -460,3 +462,5 @@ def get_runner(
         )
         _RUNNER_KEY = key
     return _RUNNER
+
+

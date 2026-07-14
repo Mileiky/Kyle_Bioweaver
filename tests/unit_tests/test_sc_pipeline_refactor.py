@@ -1,10 +1,11 @@
 import json
 import os
 import sys
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import pandas as pd
+import pytest
 from anndata import AnnData
 
 REPO_ROOT = os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
@@ -12,9 +13,9 @@ if REPO_ROOT not in sys.path:
     sys.path.insert(0, REPO_ROOT)
 
 from project.plugins.sc_front import SingleCellPipeline
-from project.sc_pipeline.sc_dag import SCStateManager
+from project.sc_pipeline.sc_dag import SCStateManager, compute_step_hash
 from project.sc_pipeline.sc_rules import create_default_registry
-from project.sc_pipeline.sc_run import get_runner
+from project.sc_pipeline.sc_run import PipelineRequest, SingleCellPipelineRunner, get_runner
 from taskweaver.plugin.context import temp_context
 
 
@@ -75,6 +76,7 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert adata1 is not None
         assert "Stage 'cluster' complete." in summary1
         assert node1 in runner.manager.graph.nodes
+        assert json.loads((dag_dir / "graph.json").read_text(encoding="utf-8"))["active_node_id"] == node1
 
         umap_node = next(iter(runner.manager.graph.predecessors(node1)), None)
         assert umap_node is not None
@@ -109,7 +111,7 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         assert "Pipeline_State" in artifact_names
 
     with temp_context(str(tmp_path)) as ctx:
-        plugin = SingleCellPipeline(name="sc_pipeline_v4", ctx=ctx, config={"storage_dir": str(dag_dir)})
+        plugin = SingleCellPipeline(name="sc_front", ctx=ctx, config={"storage_dir": str(dag_dir)})
         with patch("project.sc_pipeline.sc_rules.requests.post", return_value=FakeResponse()):
             adata4, summary4 = plugin(
                 target_stage="annotation",
@@ -136,3 +138,72 @@ def test_sc_pipeline_refactor_smoke(tmp_path):
         graph_text = (dag_dir / "graph.json").read_text(encoding="utf-8")
         assert "annotation_api_key" not in graph_text
         assert "top-secret-token" not in graph_text
+
+
+def test_strict_lookup_accepts_legacy_missing_none_param(tmp_path):
+    data_path = tmp_path / "source.h5ad"
+    data_path.write_text("source fingerprint", encoding="utf-8")
+    manager = SCStateManager(storage_dir=str(tmp_path / "dag"), registry=create_default_registry())
+    full_params = {
+        "data_path": str(data_path),
+        "scrublet_batch_key": None,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_threshold": None,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_filter_doublets": False,
+        "scrublet_skip_on_failure": True,
+        "qc_min_genes": 200,
+        "qc_max_genes": 2500,
+        "qc_mt_pct": 5,
+        "min_cells": 3,
+        "target_sum": 10000.0,
+        "n_hvg": 2000,
+        "hvg_flavor": "seurat",
+        "hvg_batch_key": None,
+    }
+    raw_hash = compute_step_hash(manager, "raw", "init", full_params)
+    nodes = [
+        ("raw", "raw", {"data_path": str(data_path)}),
+        ("scrublet", "scrublet", {key: full_params[key] for key in manager.registry.get("scrublet").param_keys}),
+        ("qc", "qc", {key: full_params[key] for key in manager.registry.get("qc").param_keys}),
+        ("normalize", "normalize", {"target_sum": 10000.0}),
+        # This legacy node predates hvg_batch_key and therefore has no exact current hash.
+        ("hvg", "hvg", {"n_hvg": 2000, "hvg_flavor": "seurat"}),
+    ]
+    for index, (node_id, action, params) in enumerate(nodes):
+        manager.graph.add_node(node_id, action=action, params=params, hash=raw_hash if action == "raw" else None)
+        if index:
+            manager.graph.add_edge(nodes[index - 1][0], node_id)
+
+    assert manager.find_node_strict("hvg", **full_params) == "hvg"
+
+
+def test_ambiguous_cache_match_rebuilds_from_exact_ancestor():
+    runner = object.__new__(SingleCellPipelineRunner)
+    runner.ctx = MagicMock()
+    runner.manager = MagicMock()
+    runner.manager.find_node_smart.return_value = (["stale-a", "stale-b"], "ambiguous")
+    runner.select_nearest_compatible_ancestor = MagicMock(return_value="exact-ancestor")
+    runner.register_or_reuse_raw_node = MagicMock()
+    runner.ensure = MagicMock(return_value="rebuilt-target")
+    request = PipelineRequest(target_stage="umap", params={"data_path": "/data/source"})
+
+    result = runner.resolve_request(request)
+
+    assert result.node_id == "rebuilt-target"
+    runner.ensure.assert_called_once_with(
+        target="umap",
+        start_state="exact-ancestor",
+        data_path="/data/source",
+    )
+    runner.register_or_reuse_raw_node.assert_not_called()
+
+
+def test_plugin_raises_pipeline_failures():
+    plugin = SingleCellPipeline(name="sc_front", ctx=MagicMock(), config={})
+    runner = MagicMock()
+    runner.execute.side_effect = ValueError("invalid pipeline request")
+
+    with patch("project.plugins.sc_front.get_runner", return_value=runner):
+        with pytest.raises(RuntimeError, match="Single-cell pipeline failed: invalid pipeline request"):
+            plugin(target_stage="umap", data_path="/data/source")

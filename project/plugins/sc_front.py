@@ -1,6 +1,4 @@
-"""TaskWeaver plugin entry point for the single-cell pipeline."""
-
-from __future__ import annotations
+# from __future__ import annotations
 
 from taskweaver.plugin import Plugin, register_plugin
 
@@ -9,14 +7,6 @@ from project.sc_pipeline.sc_run import get_runner
 
 @register_plugin
 class SingleCellPipeline(Plugin):
-    """
-    Thin TaskWeaver wrapper around the refactored single-cell pipeline runner.
-
-    Loaded by TaskWeaver from the plugin manifest. It forwards the existing
-    parameter interface to sc_run and converts exceptions into the existing
-    `(None, error_message)` plugin response.
-    """
-
     def __call__(
         self,
         target_stage: str,
@@ -61,11 +51,7 @@ class SingleCellPipeline(Plugin):
         **kwargs,
     ):
         """
-        Execute the single-cell pipeline and return `(AnnData, summary)`.
-
-        Called by the TaskWeaver runtime. It forwards all user inputs to
-        `SingleCellPipelineRunner.execute()` in sc_run and does not contain
-        analysis, DAG, loading, or plotting logic itself.
+        Execute the single-cell pipeline and returns `(AnnData, summary)`.
         """
         try:
             runner = get_runner(ctx=self.ctx, config=self.config)
@@ -75,8 +61,8 @@ class SingleCellPipeline(Plugin):
                 data_paths=data_paths,
                 sample_ids=sample_ids,
                 sample_key=sample_key,
-                multi_sample_join=multi_sample_join,
-                scrublet_batch_key=scrublet_batch_key,
+                multi_sample_join=multi_sample_join, # multi-sample needs to line up with scanpy docs
+                scrublet_batch_key=scrublet_batch_key, # READ MORE ON SCRUBLET
                 scrublet_expected_doublet_rate=scrublet_expected_doublet_rate,
                 scrublet_threshold=scrublet_threshold,
                 scrublet_n_prin_comps=scrublet_n_prin_comps,
@@ -91,7 +77,7 @@ class SingleCellPipeline(Plugin):
                 hvg_flavor=hvg_flavor,
                 hvg_batch_key=hvg_batch_key,
                 batch_correction_method=batch_correction_method,
-                combat_key=combat_key,
+                combat_key=combat_key, # what is combat (MUST LEARN)
                 max_scale_value=max_scale_value,
                 regress_out=regress_out,
                 n_comps=n_comps,
@@ -112,8 +98,4 @@ class SingleCellPipeline(Plugin):
                 **kwargs,
             )
         except Exception as exc:
-            return self._error(f"Pipeline failed: {exc}")
-
-    def _error(self, message: str):
-        """Return the existing TaskWeaver-style error tuple."""
-        return None, message
+            raise RuntimeError(f"Single cell pipeline failed: {exc}") from exc
