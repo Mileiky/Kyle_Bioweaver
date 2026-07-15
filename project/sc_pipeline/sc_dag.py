@@ -6,6 +6,7 @@ import hashlib
 import json
 import os
 import uuid
+from collections.abc import Sequence
 from typing import Any, Dict, Optional
 
 import networkx as nx
@@ -15,6 +16,7 @@ import scanpy as sc
 DEFAULT_STORAGE_DIR = os.path.abspath(
     os.path.join(os.path.dirname(__file__), "..", "workspace", "sc_dag_v4")
 )
+GRAPH_SCHEMA_VERSION = 2
 
 RUNTIME_ONLY_PARAM_KEYS = {"annotation_api_key"}
 LEGACY_PARAM_DEFAULTS = {
@@ -111,13 +113,21 @@ def _raw_hash_payload(mgr: "SCStateManager", params: Dict[str, Any]) -> Dict[str
         raw_nodes = [node_id for node_id, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
         if len(raw_nodes) == 1:
             data_path = mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("data_path")
-    return {"rule": "raw", "source": file_fingerprint(data_path)}
+    payload = {"rule": "raw", "source": file_fingerprint(data_path)}
+    if params.get("sample_id") is not None:
+        payload.update(
+            {
+                "sample_id": params.get("sample_id"),
+                "sample_key": params.get("sample_key"),
+            }
+        )
+    return payload
 
 
 def compute_step_hash(
     mgr: "SCStateManager",
     rule_name: str,
-    parent_hash: str,
+    parent_hash: Any,
     all_params: Dict[str, Any],
 ) -> str:
     """Compute the cache identity for one pipeline step."""
@@ -132,7 +142,16 @@ def compute_step_hash(
             for key, value in _sanitize_params(all_params).items()
             if key in rule.param_keys
         }
-        data = {"parent_hash": parent_hash, "rule": rule_name, "params": relevant_params}
+        if isinstance(parent_hash, Sequence) and not isinstance(parent_hash, (str, bytes)):
+            data = {
+                "parent_hashes": list(parent_hash),
+                "rule": rule_name,
+                "params": relevant_params,
+            }
+        else:
+            # Keep the legacy single-parent payload stable so existing
+            # single-sample cache entries remain reusable.
+            data = {"parent_hash": parent_hash, "rule": rule_name, "params": relevant_params}
 
     return hashlib.md5(json.dumps(data, sort_keys=True, default=str).encode()).hexdigest()
 
@@ -159,14 +178,31 @@ class SCStateManager:
     def register_new_object(
         self,
         adata: Any,
-        parent_id: Optional[str],
+        parent_id: Optional[Any],
         action: str,
         params: Dict[str, Any],
         hash_val: Optional[str] = None,
         result_key: Optional[str] = None,
         is_virtual: bool = False,
+        parent_ids: Optional[Sequence[str]] = None,
+        effective_params: Optional[Dict[str, Any]] = None,
     ) -> str:
-        """Store an immutable AnnData snapshot created by the pipeline runner."""
+        """Store an immutable snapshot with zero, one, or many ordered parents."""
+        if parent_ids is not None and parent_id is not None:
+            raise ValueError("Specify parent_id or parent_ids, not both.")
+        parent_value = parent_ids if parent_ids is not None else parent_id
+        if parent_value is None:
+            ordered_parents: list[str] = []
+        elif isinstance(parent_value, str):
+            ordered_parents = [parent_value]
+        else:
+            ordered_parents = list(parent_value)
+        if len(ordered_parents) != len(set(ordered_parents)):
+            raise ValueError("A DAG node cannot list the same parent more than once.")
+        missing = [item for item in ordered_parents if item not in self.graph.nodes]
+        if missing:
+            raise ValueError(f"Parent node(s) not found: {missing}")
+
         obj_ref = f"obj_{self._new_id()}"
         self.objects[obj_ref] = adata
         self._dirty_objects.add(obj_ref)
@@ -181,11 +217,13 @@ class SCStateManager:
             is_virtual=is_virtual,
             result_key=result_key,
             shape=list(adata.shape),
+            parent_ids=ordered_parents,
+            effective_params=_sanitize_params(effective_params) if effective_params else None,
         )
         if hash_val is not None:
             self.hash_index[hash_val] = node_id
-        if parent_id:
-            self.graph.add_edge(parent_id, node_id)
+        for item in ordered_parents:
+            self.graph.add_edge(item, node_id)
         self.save()
         return node_id
 
@@ -195,6 +233,18 @@ class SCStateManager:
             raise ValueError(f"Node {node_id} not found.")
         obj_ref = self.graph.nodes[node_id].get("obj_ref")
         return self.objects[obj_ref]
+
+    def update_effective_params(self, node_id: str, params: Optional[Dict[str, Any]]) -> None:
+        """Record the latest sanitized request that activated a cached node."""
+        if not params:
+            return
+        if node_id not in self.graph.nodes:
+            raise ValueError(f"Node {node_id} not found.")
+        sanitized = _sanitize_params(params)
+        if self.graph.nodes[node_id].get("effective_params") == sanitized:
+            return
+        self.graph.nodes[node_id]["effective_params"] = sanitized
+        self.save()
 
     def save(self) -> None:
         """Write graph metadata and newly registered objects to the cache directory."""
@@ -206,6 +256,7 @@ class SCStateManager:
         self._dirty_objects.clear()
 
         graph_data = {
+            "schema_version": GRAPH_SCHEMA_VERSION,
             "nodes": [
                 {"id": node_id, **_json_ready(attr)}
                 for node_id, attr in self.graph.nodes(data=True)
@@ -243,6 +294,13 @@ class SCStateManager:
                 self.hash_index[node_hash] = node_id
 
         self.graph.add_edges_from(graph_data.get("edges", []))
+
+        # Older graphs only persisted edge pairs. Preserve their order as read
+        # and materialize parent metadata for the multi-parent-aware API.
+        for node_id in self.graph.nodes:
+            attr = self.graph.nodes[node_id]
+            if "parent_ids" not in attr:
+                attr["parent_ids"] = list(self.graph.predecessors(node_id))
 
         obj_refs = {
             attr.get("obj_ref")
@@ -325,7 +383,10 @@ class SCStateManager:
         for node_id, attr in self.graph.nodes(data=True):
             if attr.get("action") != target_stage:
                 continue
-            lineage = self.lineage_to_node(node_id)
+            try:
+                lineage = self.lineage_to_node(node_id)
+            except ValueError:
+                continue
             if [self.graph.nodes[item].get("action") for item in lineage] != chain:
                 continue
 
@@ -361,24 +422,61 @@ class SCStateManager:
         current_id: Optional[str] = node_id
         while current_id is not None:
             lineage.append(current_id)
-            predecessors = list(self.graph.predecessors(current_id))
+            predecessors = self.parent_ids(current_id)
             if len(predecessors) > 1:
-                return []
+                raise ValueError(
+                    f"Node {current_id} has multiple parents; use ancestry_to_node() instead."
+                )
             current_id = predecessors[0] if predecessors else None
         return list(reversed(lineage))
+
+    def parent_ids(self, node_id: str) -> list[str]:
+        """Return a node's parents in their semantically significant order."""
+        if node_id not in self.graph.nodes:
+            raise ValueError(f"Node {node_id} not found.")
+        saved = self.graph.nodes[node_id].get("parent_ids")
+        if saved is not None:
+            return list(saved)
+        return list(self.graph.predecessors(node_id))
+
+    def ancestry_to_node(self, node_id: str) -> list[str]:
+        """Return deterministic parent-first ancestry for linear or merged DAGs."""
+        if node_id not in self.graph.nodes:
+            raise ValueError(f"Node {node_id} not found.")
+        ordered: list[str] = []
+        visited: set[str] = set()
+
+        def visit(current_id: str) -> None:
+            if current_id in visited:
+                return
+            for parent_id in self.parent_ids(current_id):
+                visit(parent_id)
+            visited.add(current_id)
+            ordered.append(current_id)
+
+        visit(node_id)
+        return ordered
 
     def ancestors_including_self(self, node_id: str) -> set[str]:
         """Return the node and every ancestor queried through NetworkX."""
         return self.ancestors(node_id) | {node_id}
 
     def raw_ancestor(self, node_id: str) -> Optional[str]:
-        """Return the upstream raw node for a lineage."""
+        """Return the sole raw ancestor, or ``None`` for a merged lineage."""
         if node_id not in self.graph.nodes:
             return None
-        for ancestor_id in self.lineage_to_node(node_id):
-            if self.graph.nodes[ancestor_id].get("action") == "raw":
-                return ancestor_id
-        return node_id
+        raw_nodes = self.raw_ancestors(node_id)
+        return raw_nodes[0] if len(raw_nodes) == 1 else None
+
+    def raw_ancestors(self, node_id: str) -> list[str]:
+        """Return every raw root contributing to a node, in parent order."""
+        if node_id not in self.graph.nodes:
+            return []
+        return [
+            item
+            for item in self.ancestry_to_node(node_id)
+            if self.graph.nodes[item].get("action") == "raw"
+        ]
 
     def ancestors(self, node_id: str) -> set[str]:
         """Return all ancestors using NetworkX."""

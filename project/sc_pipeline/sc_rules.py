@@ -22,7 +22,8 @@ class Rule:
     def __post_init__(self) -> None:
         sig = inspect.signature(self.func)
         system_params = {"mgr", "parent_id"}
-        self.param_keys = [key for key in sig.parameters if key not in system_params]
+        self.call_param_keys = [key for key in sig.parameters if key not in system_params]
+        self.param_keys = [key for key in self.call_param_keys if not key.startswith("_")]
 
 
 class RuleRegistry:
@@ -88,10 +89,12 @@ def qc_filter_rule(
     qc_max_genes: int = 2500,
     qc_mt_pct: float = 5,
     min_cells: int = 3,
+    _filter_genes: bool = True,
 ):
     """Filter genes and cells when the pipeline runner reaches the QC stage."""
     adata = mgr.get_object(parent_id).copy()
-    sc.pp.filter_genes(adata, min_cells=min_cells)
+    if _filter_genes:
+        sc.pp.filter_genes(adata, min_cells=min_cells)
     adata.var["mt"] = adata.var_names.str.startswith(("MT-", "mt-"))
     sc.pp.calculate_qc_metrics(adata, qc_vars=["mt"], percent_top=None, log1p=False, inplace=True)
     sc.pp.filter_cells(adata, min_genes=qc_min_genes)
@@ -99,6 +102,60 @@ def qc_filter_rule(
     if qc_mt_pct is not None:
         adata = adata[adata.obs["pct_counts_mt"] < qc_mt_pct, :].copy()
     return adata, "new_object"
+
+
+def concat_rule(
+    mgr: Any,
+    parent_id: Any,
+    sample_ids: List[str],
+    sample_key: str = "sample",
+    multi_sample_join: str = "inner",
+    min_cells: int = 3,
+    source_stage: str = "qc",
+    preview: bool = False,
+):
+    """Concatenate ordered sample branches and optionally filter genes globally."""
+    parent_ids = list(parent_id) if not isinstance(parent_id, str) else [parent_id]
+    if len(parent_ids) != len(sample_ids):
+        raise ValueError("concat requires one ordered parent for each sample_id.")
+    if multi_sample_join not in {"inner", "outer"}:
+        raise ValueError("multi_sample_join must be 'inner' or 'outer'.")
+
+    adatas = {}
+    input_shapes = {}
+    for node_id, sample_id in zip(parent_ids, sample_ids):
+        adata = mgr.get_object(node_id).copy()
+        if adata.n_obs == 0:
+            raise ValueError(f"Sample '{sample_id}' has no cells available for concatenation.")
+        adata.var_names_make_unique()
+        adata.obs[sample_key] = sample_id
+        adatas[sample_id] = adata
+        input_shapes[sample_id] = [adata.n_obs, adata.n_vars]
+
+    combined = sc.concat(
+        adatas,
+        label=sample_key,
+        index_unique="-",
+        join=multi_sample_join,
+        merge="same",
+        fill_value=0 if multi_sample_join == "outer" else None,
+    )
+    if not preview:
+        sc.pp.filter_genes(combined, min_cells=min_cells)
+    if combined.n_obs == 0 or combined.n_vars == 0:
+        raise ValueError("Concatenation and gene filtering produced an empty dataset.")
+
+    combined.uns["multi_sample"] = {
+        "sample_key": sample_key,
+        "sample_ids": list(sample_ids),
+        "join": multi_sample_join,
+        "source_stage": source_stage,
+        "preview": preview,
+        "min_cells": None if preview else min_cells,
+        "input_shapes": input_shapes,
+    }
+    result_key = f"concat_preview_{source_stage}" if preview else "concat"
+    return combined, "new_object", result_key
 
 
 def normalize_rule(mgr: Any, parent_id: str, target_sum: float = 1e4):
@@ -391,6 +448,7 @@ def create_default_registry() -> RuleRegistry:
     registry = RuleRegistry()
     registry.register(Rule("scrublet", ["raw"], scrublet_rule))
     registry.register(Rule("qc", ["scrublet"], qc_filter_rule))
+    registry.register(Rule("concat", ["qc"], concat_rule))
     registry.register(Rule("normalize", ["qc"], normalize_rule))
     registry.register(Rule("hvg", ["normalize"], hvg_rule))
     registry.register(Rule("batch_correct", ["hvg"], batch_correct_rule))

@@ -16,7 +16,13 @@ if REPO_ROOT not in sys.path:
 
 from project.plugins.sc_front import SingleCellPipeline
 from project.sc_pipeline.sc_dag import SCStateManager, compute_step_hash
-from project.sc_pipeline.sc_rules import batch_correct_rule, create_default_registry, neighbors_rule, scrublet_rule
+from project.sc_pipeline.sc_rules import (
+    batch_correct_rule,
+    concat_rule,
+    create_default_registry,
+    neighbors_rule,
+    scrublet_rule,
+)
 from project.sc_pipeline.sc_run import PipelineRequest, SingleCellPipelineRunner, get_runner
 from taskweaver.plugin.context import temp_context
 
@@ -361,6 +367,231 @@ def test_multi_sample_loading_and_runner_reuse(tmp_path):
         assert set(adata.obs["sample"].astype(str)) == {"sample_a", "sample_b"}
         assert adata.uns["multi_sample"]["sample_ids"] == ["sample_a", "sample_b"]
         assert "Stage 'raw' complete." in summary
+        preview_node = runner.manager.active_node_id
+        assert runner.manager.graph.nodes[preview_node]["action"] == "concat"
+        assert runner.manager.graph.nodes[preview_node]["params"]["preview"] is True
+        preview_parents = runner.manager.parent_ids(preview_node)
+        assert [runner.manager.graph.nodes[item]["action"] for item in preview_parents] == ["raw", "raw"]
+
+
+def test_manager_persists_ordered_multiple_parents(tmp_path):
+    manager = SCStateManager(storage_dir=str(tmp_path / "dag"), registry=create_default_registry())
+    left = manager.register_new_object(
+        _make_test_adata(), parent_id=None, action="raw", params={"data_path": "left"}, hash_val="left"
+    )
+    right = manager.register_new_object(
+        _make_test_adata(), parent_id=None, action="raw", params={"data_path": "right"}, hash_val="right"
+    )
+    merged = manager.register_new_object(
+        _make_test_adata(),
+        parent_id=None,
+        parent_ids=[right, left],
+        action="concat",
+        params={"sample_ids": ["right", "left"]},
+        hash_val="merged",
+    )
+
+    assert manager.parent_ids(merged) == [right, left]
+    assert manager.raw_ancestors(merged) == [right, left]
+    assert manager.ancestry_to_node(merged) == [right, left, merged]
+    with pytest.raises(ValueError, match="multiple parents"):
+        manager.lineage_to_node(merged)
+
+    reloaded = SCStateManager(storage_dir=str(tmp_path / "dag"), registry=create_default_registry())
+    assert reloaded.parent_ids(merged) == [right, left]
+    graph_json = json.loads((tmp_path / "dag" / "graph.json").read_text(encoding="utf-8"))
+    assert graph_json["schema_version"] == 2
+
+    forward_hash = compute_step_hash(
+        manager,
+        "concat",
+        ["right", "left"],
+        {"sample_ids": ["right", "left"]},
+    )
+    reverse_hash = compute_step_hash(
+        manager,
+        "concat",
+        ["left", "right"],
+        {"sample_ids": ["right", "left"]},
+    )
+    assert forward_hash != reverse_hash
+
+
+def test_concat_filters_genes_after_combining_samples():
+    obs = pd.DataFrame(index=[f"cell_{idx}" for idx in range(4)])
+    var = pd.DataFrame(index=["common", "rare"])
+    sample_a = AnnData(X=np.array([[1, 1], [1, 1], [1, 0], [1, 0]]), obs=obs.copy(), var=var.copy())
+    sample_b = AnnData(X=np.array([[1, 1], [1, 1], [1, 0], [1, 0]]), obs=obs.copy(), var=var.copy())
+    manager = MagicMock()
+    manager.get_object.side_effect = lambda node_id: {"a": sample_a, "b": sample_b}[node_id]
+
+    combined, result_type, result_key = concat_rule(
+        manager,
+        ["a", "b"],
+        sample_ids=["a", "b"],
+        min_cells=3,
+    )
+
+    assert combined.shape == (8, 2)
+    assert "rare" in combined.var_names
+    assert set(combined.obs["sample"].astype(str)) == {"a", "b"}
+    assert result_type == "new_object"
+    assert result_key == "concat"
+    assert "sample" not in sample_a.obs
+    assert "sample" not in sample_b.obs
+
+
+def test_multi_sample_branches_merge_after_qc_and_reuse_unaffected_sample(tmp_path):
+    paths = [tmp_path / "sample_a.h5ad", tmp_path / "sample_b.h5ad"]
+    for path in paths:
+        _make_test_adata().write_h5ad(path)
+
+    def fake_scrublet(adata, **kwargs):
+        adata.obs["doublet_score"] = np.linspace(0, 1, adata.n_obs)
+        adata.obs["predicted_doublet"] = False
+        adata.uns["scrublet"] = {"parameters": kwargs}
+
+    params = {
+        "data_paths": [str(path) for path in paths],
+        "sample_ids": ["a", "b"],
+        "qc_min_genes": 1,
+        "qc_max_genes": 1000,
+        "qc_mt_pct": None,
+        "min_cells": 3,
+        "sample_overrides": {"b": {"qc_max_genes": 900}},
+    }
+    with temp_context(str(tmp_path)) as ctx:
+        runner = get_runner(
+            ctx=ctx,
+            config={"storage_dir": str(tmp_path / "dag")},
+            force_new=True,
+        )
+        with patch("project.sc_pipeline.sc_rules.sc.pp.scrublet", side_effect=fake_scrublet):
+            adata, summary = runner.execute(target_stage="normalize", **params)
+
+        normalize_node = runner.manager.active_node_id
+        concat_node = runner.manager.parent_ids(normalize_node)[0]
+        qc_nodes = runner.manager.parent_ids(concat_node)
+        first_qc_by_sample = {
+            runner.manager.graph.nodes[runner.manager.raw_ancestors(node)[0]]["params"]["sample_id"]: node
+            for node in qc_nodes
+        }
+
+        assert adata.n_obs == 60
+        assert "Stage 'normalize' complete." in summary
+        assert runner.manager.graph.nodes[concat_node]["action"] == "concat"
+        assert [runner.manager.graph.nodes[item]["action"] for item in qc_nodes] == ["qc", "qc"]
+        assert runner.manager.graph.nodes[qc_nodes[0]]["params"]["qc_max_genes"] == 1000
+        assert runner.manager.graph.nodes[qc_nodes[1]]["params"]["qc_max_genes"] == 900
+        layout = runner.io.pipeline_dag_layout(runner.manager, normalize_node)
+        raw_nodes = runner.manager.raw_ancestors(normalize_node)
+        assert layout[raw_nodes[0]][1] != layout[raw_nodes[1]][1]
+        assert layout[concat_node][1] == 0
+
+        changed = {**params, "sample_overrides": {"b": {"qc_max_genes": 800}}}
+        with patch("project.sc_pipeline.sc_rules.sc.pp.scrublet", side_effect=fake_scrublet):
+            runner.execute(target_stage="concat", **changed)
+        changed_qc_nodes = runner.manager.parent_ids(runner.manager.active_node_id)
+        changed_qc_by_sample = {
+            runner.manager.graph.nodes[runner.manager.raw_ancestors(node)[0]]["params"]["sample_id"]: node
+            for node in changed_qc_nodes
+        }
+        assert changed_qc_by_sample["a"] == first_qc_by_sample["a"]
+        assert changed_qc_by_sample["b"] != first_qc_by_sample["b"]
+
+
+def test_multi_sample_request_validation(tmp_path):
+    with temp_context(str(tmp_path)) as ctx:
+        runner = get_runner(ctx=ctx, config={"storage_dir": str(tmp_path / "dag")}, force_new=True)
+        with pytest.raises(ValueError, match="unique"):
+            runner.normalize_request(
+                target_stage="concat",
+                data_paths=["a", "b"],
+                sample_ids=["same", "same"],
+            )
+        with pytest.raises(ValueError, match="unknown sample IDs"):
+            runner.normalize_request(
+                target_stage="concat",
+                data_paths=["a", "b"],
+                sample_ids=["a", "b"],
+                sample_overrides={"c": {"qc_mt_pct": 10}},
+            )
+        with pytest.raises(ValueError, match="requires at least two"):
+            runner.normalize_request(target_stage="concat", data_path="one.h5ad")
+
+
+def test_multi_sample_pipeline_runs_from_merged_qc_through_cluster(tmp_path):
+    paths = [tmp_path / "sample_a.h5ad", tmp_path / "sample_b.h5ad"]
+    for path in paths:
+        _make_test_adata().write_h5ad(path)
+
+    def fake_scrublet(adata, **kwargs):
+        adata.obs["doublet_score"] = 0.1
+        adata.obs["predicted_doublet"] = False
+        adata.uns["scrublet"] = {"parameters": kwargs}
+
+    with temp_context(str(tmp_path)) as ctx:
+        runner = get_runner(ctx=ctx, config={"storage_dir": str(tmp_path / "dag")}, force_new=True)
+        with patch("project.sc_pipeline.sc_rules.sc.pp.scrublet", side_effect=fake_scrublet):
+            adata, summary = runner.execute(
+                target_stage="cluster",
+                data_paths=[str(path) for path in paths],
+                sample_ids=["a", "b"],
+                qc_min_genes=1,
+                qc_max_genes=1000,
+                qc_mt_pct=None,
+                min_cells=1,
+                n_hvg=12,
+                regress_out=False,
+                n_comps=5,
+                n_pcs=5,
+                resolution=0.4,
+                integration_method="none",
+            )
+
+        actions = [
+            runner.manager.graph.nodes[item]["action"]
+            for item in runner.manager.ancestry_to_node(runner.manager.active_node_id)
+        ]
+        assert actions.count("raw") == 2
+        assert actions.count("scrublet") == 2
+        assert actions.count("qc") == 2
+        assert actions.count("concat") == 1
+        assert "leiden_res0.4" in adata.obs
+        assert "X_umap" in adata.obsm
+        assert "Integration: none" in summary
+
+
+def test_legacy_combined_multi_sample_cache_is_readable_but_not_reused(tmp_path):
+    paths = [tmp_path / "sample_a.h5ad", tmp_path / "sample_b.h5ad"]
+    for path in paths:
+        _make_test_adata().write_h5ad(path)
+    manager = SCStateManager(storage_dir=str(tmp_path / "dag"), registry=create_default_registry())
+    legacy_params = {
+        "data_paths": [str(path) for path in paths],
+        "sample_ids": ["a", "b"],
+        "sample_key": "sample",
+        "multi_sample_join": "inner",
+    }
+    legacy_adata = _make_test_adata()
+    legacy_hash = compute_step_hash(manager, "raw", "init", legacy_params)
+    legacy_node = manager.register_new_object(
+        legacy_adata,
+        parent_id=None,
+        action="raw",
+        params=legacy_params,
+        hash_val=legacy_hash,
+    )
+
+    with temp_context(str(tmp_path)) as ctx:
+        runner = SingleCellPipelineRunner(ctx=ctx, manager=manager, registry=manager.registry)
+        adata, _ = runner.execute(target_stage="raw", **legacy_params)
+
+    active_node = manager.active_node_id
+    assert adata.n_obs == 60
+    assert legacy_node in manager.graph.nodes
+    assert legacy_node not in manager.ancestry_to_node(active_node)
+    assert len(manager.raw_ancestors(active_node)) == 2
 
 
 def test_strict_lookup_accepts_legacy_missing_none_param(tmp_path):

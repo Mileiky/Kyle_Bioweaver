@@ -1,0 +1,23 @@
+[
+  {
+    "name": "Analysis_Result",
+    "file_name": "result_node_d00b2b81.png",
+    "type": "image",
+    "description": "Plot for markers.",
+    "path": "/Users/kyleyang/Bioweaver/data/sc_front_pbmc10k_pbmc3k_qc15_max5000/artifacts/result_node_d00b2b81.png"
+  },
+  {
+    "name": "Final_UMAP",
+    "file_name": "result_final_umap_node_d00b2b81.png",
+    "type": "image",
+    "description": "Final UMAP plot colored by leiden_res0.5.",
+    "path": "/Users/kyleyang/Bioweaver/data/sc_front_pbmc10k_pbmc3k_qc15_max5000/artifacts/result_final_umap_node_d00b2b81.png"
+  },
+  {
+    "name": "Pipeline_State",
+    "file_name": "result_pipeline_dag_node_d00b2b81.png",
+    "type": "image",
+    "description": "Current pipeline DAG.",
+    "path": "/Users/kyleyang/Bioweaver/data/sc_front_pbmc10k_pbmc3k_qc15_max5000/artifacts/result_pipeline_dag_node_d00b2b81.png"
+  }
+]

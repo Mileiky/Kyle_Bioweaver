@@ -1,0 +1,1162 @@
+{
+  "active_node_id": "node_d00b2b81",
+  "edges": [
+    [
+      "node_e6d32758",
+      "node_7ce03ad8"
+    ],
+    [
+      "node_347286e8",
+      "node_50f00df2"
+    ],
+    [
+      "node_7ce03ad8",
+      "node_df92b9f3"
+    ],
+    [
+      "node_50f00df2",
+      "node_e743283c"
+    ],
+    [
+      "node_df92b9f3",
+      "node_aa68ce0f"
+    ],
+    [
+      "node_e743283c",
+      "node_aa68ce0f"
+    ],
+    [
+      "node_aa68ce0f",
+      "node_c9621ec7"
+    ],
+    [
+      "node_c9621ec7",
+      "node_2e07fe48"
+    ],
+    [
+      "node_2e07fe48",
+      "node_55c2e43b"
+    ],
+    [
+      "node_55c2e43b",
+      "node_079a8f93"
+    ],
+    [
+      "node_079a8f93",
+      "node_b497a56f"
+    ],
+    [
+      "node_b497a56f",
+      "node_10701168"
+    ],
+    [
+      "node_10701168",
+      "node_539f8d83"
+    ],
+    [
+      "node_539f8d83",
+      "node_1cab86c0"
+    ],
+    [
+      "node_1cab86c0",
+      "node_d00b2b81"
+    ]
+  ],
+  "nodes": [
+    {
+      "action": "raw",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "4b7a4ff9a7abf74330f2516dfbbf1218",
+      "id": "node_e6d32758",
+      "is_virtual": false,
+      "obj_ref": "obj_02ced088",
+      "params": {
+        "data_path": "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+        "sample_id": "pbmc10k",
+        "sample_key": "sample"
+      },
+      "parent_ids": [],
+      "result_key": null,
+      "shape": [
+        11769,
+        33538
+      ]
+    },
+    {
+      "action": "raw",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "5d0d90d3449a391871aa707c2ace4b8b",
+      "id": "node_347286e8",
+      "is_virtual": false,
+      "obj_ref": "obj_80c4fed3",
+      "params": {
+        "data_path": "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/",
+        "sample_id": "pbmc3k",
+        "sample_key": "sample"
+      },
+      "parent_ids": [],
+      "result_key": null,
+      "shape": [
+        2700,
+        32738
+      ]
+    },
+    {
+      "action": "scrublet",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "4b3ab863fe67edbade383816c2daa768",
+      "id": "node_7ce03ad8",
+      "is_virtual": false,
+      "obj_ref": "obj_530b6726",
+      "params": {
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null
+      },
+      "parent_ids": [
+        "node_e6d32758"
+      ],
+      "result_key": "scrublet",
+      "shape": [
+        11769,
+        33538
+      ]
+    },
+    {
+      "action": "scrublet",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "fef3a25a70d37b4152962c707eb9bb55",
+      "id": "node_50f00df2",
+      "is_virtual": false,
+      "obj_ref": "obj_50b5707c",
+      "params": {
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null
+      },
+      "parent_ids": [
+        "node_347286e8"
+      ],
+      "result_key": "scrublet",
+      "shape": [
+        2700,
+        32738
+      ]
+    },
+    {
+      "action": "qc",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "8de021e1ae69bde56dd1305cddc56545",
+      "id": "node_df92b9f3",
+      "is_virtual": false,
+      "obj_ref": "obj_94fb013a",
+      "params": {
+        "_filter_genes": false,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15
+      },
+      "parent_ids": [
+        "node_7ce03ad8"
+      ],
+      "result_key": null,
+      "shape": [
+        10639,
+        33538
+      ]
+    },
+    {
+      "action": "qc",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "0ec77d34a7095ade45010dfd2600e6a2",
+      "id": "node_e743283c",
+      "is_virtual": false,
+      "obj_ref": "obj_a04c2d6f",
+      "params": {
+        "_filter_genes": false,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15
+      },
+      "parent_ids": [
+        "node_50f00df2"
+      ],
+      "result_key": null,
+      "shape": [
+        2698,
+        32738
+      ]
+    },
+    {
+      "action": "concat",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "00b5a4b8d2615fd60ac5381642a7c5e0",
+      "id": "node_aa68ce0f",
+      "is_virtual": false,
+      "obj_ref": "obj_d0affb5d",
+      "params": {
+        "min_cells": 3,
+        "multi_sample_join": "inner",
+        "preview": false,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "source_stage": "qc"
+      },
+      "parent_ids": [
+        "node_df92b9f3",
+        "node_e743283c"
+      ],
+      "result_key": "concat",
+      "shape": [
+        13337,
+        15265
+      ]
+    },
+    {
+      "action": "normalize",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "a56625ad6c94c4e31d76ecf2def2459a",
+      "id": "node_c9621ec7",
+      "is_virtual": false,
+      "obj_ref": "obj_6d96ce0a",
+      "params": {
+        "target_sum": 10000.0
+      },
+      "parent_ids": [
+        "node_aa68ce0f"
+      ],
+      "result_key": null,
+      "shape": [
+        13337,
+        15265
+      ]
+    },
+    {
+      "action": "hvg",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "83f0ef9109e72bc0a48d9bb23d545c12",
+      "id": "node_2e07fe48",
+      "is_virtual": false,
+      "obj_ref": "obj_6252dc9c",
+      "params": {
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "n_hvg": 2000
+      },
+      "parent_ids": [
+        "node_c9621ec7"
+      ],
+      "result_key": null,
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "batch_correct",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "c775b0048dcf518099000715e627559a",
+      "id": "node_55c2e43b",
+      "is_virtual": false,
+      "obj_ref": "obj_ec1fac4d",
+      "params": {
+        "batch_correction_method": "none",
+        "combat_key": "sample",
+        "sample_key": "sample"
+      },
+      "parent_ids": [
+        "node_2e07fe48"
+      ],
+      "result_key": "batch_correction_none",
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "scale",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "ac2b240529e3a8a86298358c63d15d08",
+      "id": "node_079a8f93",
+      "is_virtual": false,
+      "obj_ref": "obj_4fb432dd",
+      "params": {
+        "max_scale_value": 10,
+        "regress_out": true
+      },
+      "parent_ids": [
+        "node_55c2e43b"
+      ],
+      "result_key": null,
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "pca",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "adffea812d0b2c8d619714c8e48c8704",
+      "id": "node_b497a56f",
+      "is_virtual": false,
+      "obj_ref": "obj_de974093",
+      "params": {
+        "n_comps": 50
+      },
+      "parent_ids": [
+        "node_079a8f93"
+      ],
+      "result_key": "X_pca",
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "neighbors",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "be1e66dceed01e78c1b91125d1b33975",
+      "id": "node_10701168",
+      "is_virtual": false,
+      "obj_ref": "obj_dd862212",
+      "params": {
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "use_rep": "X_pca"
+      },
+      "parent_ids": [
+        "node_b497a56f"
+      ],
+      "result_key": "neighbors",
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "umap",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "ab95b0cb17ad04f59e090a422a88d153",
+      "id": "node_539f8d83",
+      "is_virtual": false,
+      "obj_ref": "obj_f17034c0",
+      "params": {
+        "min_dist": 0.5,
+        "spread": 1.0
+      },
+      "parent_ids": [
+        "node_10701168"
+      ],
+      "result_key": "X_umap",
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "cluster",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "8e8c720c0dd97ddbdfd3c86ae5ba6952",
+      "id": "node_1cab86c0",
+      "is_virtual": true,
+      "obj_ref": "obj_8fb61208",
+      "params": {
+        "cluster_method": "leiden",
+        "resolution": 0.5
+      },
+      "parent_ids": [
+        "node_539f8d83"
+      ],
+      "result_key": "leiden_res0.5",
+      "shape": [
+        13337,
+        2000
+      ]
+    },
+    {
+      "action": "markers",
+      "effective_params": {
+        "annotation_api_base": "http://localhost:11434/v1",
+        "annotation_model": "qwen3.5:122b",
+        "batch_correction_method": "none",
+        "cluster_method": "leiden",
+        "combat_key": "sample",
+        "data_path": null,
+        "data_paths": [
+          "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/",
+          "/Users/kyleyang/data/pbmc3k_filtered_gene_bc_matrices/filtered_gene_bc_matrices/hg19/"
+        ],
+        "groupby": null,
+        "hvg_batch_key": "sample",
+        "hvg_flavor": "seurat",
+        "integration_batch_key": "sample",
+        "integration_method": "bbknn",
+        "marker_method": "wilcoxon",
+        "max_scale_value": 10,
+        "min_cells": 3,
+        "min_dist": 0.5,
+        "multi_sample_join": "inner",
+        "n_annotation_markers": 10,
+        "n_comps": 50,
+        "n_hvg": 2000,
+        "n_marker_genes": 25,
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15,
+        "regress_out": true,
+        "resolution": 0.5,
+        "sample_ids": [
+          "pbmc10k",
+          "pbmc3k"
+        ],
+        "sample_key": "sample",
+        "sample_overrides": {},
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null,
+        "spread": 1.0,
+        "target_sum": 10000.0,
+        "use_rep": "X_pca"
+      },
+      "hash": "d7478a43781f5fb0998117439d269e67",
+      "id": "node_d00b2b81",
+      "is_virtual": false,
+      "obj_ref": "obj_2138d655",
+      "params": {
+        "groupby": null,
+        "marker_method": "wilcoxon",
+        "n_marker_genes": 25
+      },
+      "parent_ids": [
+        "node_1cab86c0"
+      ],
+      "result_key": "markers_leiden_res0.5_wilcoxon_25",
+      "shape": [
+        13337,
+        2000
+      ]
+    }
+  ],
+  "schema_version": 2
+}

@@ -1,5 +1,7 @@
 """Pipeline orchestration for the single-cell TaskWeaver plugin."""
 
+import json
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from typing import Any, Dict, Optional
 
@@ -57,6 +59,12 @@ class SingleCellPipelineRunner:
         sample_ids = self.io.coerce_optional_list(kwargs.get("sample_ids"))
         sample_key = kwargs.get("sample_key", "sample")
         multi_sample_join = kwargs.get("multi_sample_join", "inner")
+        sample_overrides = kwargs.get("sample_overrides") or {}
+        if isinstance(sample_overrides, str):
+            sample_overrides = json.loads(sample_overrides)
+        if not isinstance(sample_overrides, Mapping):
+            raise ValueError("sample_overrides must be a mapping keyed by sample ID.")
+        sample_overrides = {str(key): value for key, value in sample_overrides.items()}
         scrublet_batch_key = kwargs.get("scrublet_batch_key")
         hvg_batch_key = kwargs.get("hvg_batch_key")
         combat_key = kwargs.get("combat_key")
@@ -77,10 +85,11 @@ class SingleCellPipelineRunner:
                 raise ValueError("Specify either data_path or data_paths, not both.")
             if sample_ids is None:
                 sample_ids = [f"sample_{idx + 1}" for idx in range(len(data_paths))]
+            sample_ids = [str(item) for item in sample_ids]
             if len(sample_ids) != len(data_paths):
                 raise ValueError("sample_ids must have the same length as data_paths.")
-            if scrublet_batch_key is None:
-                scrublet_batch_key = sample_key
+            if len(sample_ids) != len(set(sample_ids)):
+                raise ValueError("sample_ids must be unique.")
             if hvg_batch_key is None:
                 hvg_batch_key = sample_key
         elif data_path is None:
@@ -92,11 +101,16 @@ class SingleCellPipelineRunner:
                 sample_key = source_params.get("sample_key", sample_key)
                 multi_sample_join = source_params.get("multi_sample_join", multi_sample_join)
             if data_paths:
-                if scrublet_batch_key is None:
-                    scrublet_batch_key = sample_key
                 if hvg_batch_key is None:
                     hvg_batch_key = sample_key
         is_multi_sample = bool(data_paths and len(data_paths) > 1)
+        if data_paths and len(data_paths) < 2:
+            raise ValueError("data_paths requires at least two inputs; use data_path for one sample.")
+        if target_stage == "concat" and not is_multi_sample:
+            raise ValueError("target_stage='concat' requires at least two data_paths.")
+        if sample_overrides and not is_multi_sample:
+            raise ValueError("sample_overrides is only supported with data_paths.")
+        self.validate_sample_overrides(sample_overrides, sample_ids or [])
         if integration_method not in {"auto", "none", "combat", "bbknn"}:
             raise ValueError("integration_method must be 'auto', 'none', 'combat', or 'bbknn'.")
         if legacy_batch_method not in {"none", "combat"}:
@@ -136,6 +150,7 @@ class SingleCellPipelineRunner:
             "sample_ids": sample_ids,
             "sample_key": sample_key,
             "multi_sample_join": multi_sample_join,
+            "sample_overrides": sample_overrides,
             "scrublet_batch_key": scrublet_batch_key,
             "scrublet_expected_doublet_rate": kwargs.get("scrublet_expected_doublet_rate", 0.05),
             "scrublet_threshold": kwargs.get("scrublet_threshold"),
@@ -179,6 +194,32 @@ class SingleCellPipelineRunner:
 
         return PipelineRequest(target_stage=target_stage, params=params)
 
+    @staticmethod
+    def validate_sample_overrides(overrides: Dict[str, Any], sample_ids: list[str]) -> None:
+        """Validate per-sample parameters before any branch work starts."""
+        allowed = {
+            "scrublet_batch_key",
+            "scrublet_expected_doublet_rate",
+            "scrublet_threshold",
+            "scrublet_n_prin_comps",
+            "scrublet_filter_doublets",
+            "scrublet_skip_on_failure",
+            "qc_min_genes",
+            "qc_max_genes",
+            "qc_mt_pct",
+        }
+        unknown_samples = sorted(set(overrides) - set(sample_ids))
+        if unknown_samples:
+            raise ValueError(f"sample_overrides contains unknown sample IDs: {unknown_samples}")
+        for sample_id, values in overrides.items():
+            if not isinstance(values, Mapping):
+                raise ValueError(f"sample_overrides['{sample_id}'] must be a mapping.")
+            unknown_keys = sorted(set(values) - allowed)
+            if unknown_keys:
+                raise ValueError(
+                    f"sample_overrides['{sample_id}'] contains unsupported keys: {unknown_keys}"
+                )
+
     def infer_active_params(self) -> Dict[str, Any]:
         """Collect saved parameters from the active DAG lineage for a follow-up call."""
         mgr = self.manager
@@ -186,8 +227,12 @@ class SingleCellPipelineRunner:
         if active_node_id not in mgr.graph.nodes:
             return {}
 
+        effective = mgr.graph.nodes[active_node_id].get("effective_params")
+        if effective:
+            return dict(effective)
+
         params: Dict[str, Any] = {}
-        for node_id in mgr.lineage_to_node(active_node_id):
+        for node_id in mgr.ancestry_to_node(active_node_id):
             params.update(mgr.graph.nodes[node_id].get("params", {}))
         return params
 
@@ -196,9 +241,30 @@ class SingleCellPipelineRunner:
         mgr = self.manager
         active_node_id = getattr(mgr, "active_node_id", None)
         if active_node_id in mgr.graph.nodes:
+            effective = mgr.graph.nodes[active_node_id].get("effective_params")
+            if effective:
+                return {
+                    key: effective.get(key)
+                    for key in (
+                        "data_path",
+                        "data_paths",
+                        "sample_ids",
+                        "sample_key",
+                        "multi_sample_join",
+                    )
+                    if effective.get(key) is not None
+                }
             raw_node_id = mgr.raw_ancestor(active_node_id)
             if raw_node_id is not None:
                 return mgr.graph.nodes[raw_node_id].get("params", {})
+
+            raw_nodes = mgr.raw_ancestors(active_node_id)
+            if raw_nodes:
+                return {
+                    "data_paths": [mgr.graph.nodes[item].get("params", {}).get("data_path") for item in raw_nodes],
+                    "sample_ids": [mgr.graph.nodes[item].get("params", {}).get("sample_id") for item in raw_nodes],
+                    "sample_key": mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("sample_key", "sample"),
+                }
 
         raw_nodes = [node_id for node_id, attr in mgr.graph.nodes(data=True) if attr.get("action") == "raw"]
         if len(raw_nodes) == 1:
@@ -208,6 +274,9 @@ class SingleCellPipelineRunner:
 
     def resolve_request(self, request: PipelineRequest) -> str:
         """Return the exact cached node or build missing stages for `execute`."""
+        if request.params.get("data_paths"):
+            return self.resolve_multi_sample_request(request)
+
         mgr = self.manager
         self.ctx.log(
             "info",
@@ -238,6 +307,122 @@ class SingleCellPipelineRunner:
         )
         return final_node_id
 
+    def resolve_multi_sample_request(self, request: PipelineRequest) -> str:
+        """Build or reuse independent sample branches and their merge."""
+        params = request.params
+        sample_ids = list(params["sample_ids"])
+        data_paths = list(params["data_paths"])
+        self.ctx.log(
+            "info",
+            "sc_pipeline",
+            f"Resolving {len(sample_ids)} per-sample branches for '{request.target_stage}'.",
+        )
+
+        raw_nodes = [
+            self.register_or_reuse_sample_raw(path, sample_id, params)
+            for path, sample_id in zip(data_paths, sample_ids)
+        ]
+        if request.target_stage == "raw":
+            return self.run_concat(raw_nodes, params, source_stage="raw", preview=True)
+
+        scrublet_nodes = []
+        for node_id, sample_id in zip(raw_nodes, sample_ids):
+            branch_params = self.sample_stage_params(params, sample_id)
+            scrublet_nodes.append(
+                self.run_rule("scrublet", node_id, effective_params=params, **branch_params)
+            )
+        if request.target_stage == "scrublet":
+            return self.run_concat(scrublet_nodes, params, source_stage="scrublet", preview=True)
+
+        qc_nodes = []
+        for node_id, sample_id in zip(scrublet_nodes, sample_ids):
+            branch_params = self.sample_stage_params(params, sample_id)
+            branch_params.pop("min_cells", None)
+            branch_params["_filter_genes"] = False
+            qc_node = self.run_rule("qc", node_id, effective_params=params, **branch_params)
+            if self.manager.get_object(qc_node).n_obs == 0:
+                raise ValueError(f"Sample '{sample_id}' has no cells after QC.")
+            qc_nodes.append(qc_node)
+
+        concat_node = self.run_concat(qc_nodes, params, source_stage="qc", preview=False)
+        if request.target_stage in {"qc", "concat"}:
+            return concat_node
+
+        combined_stages = [
+            "normalize",
+            "hvg",
+            "batch_correct",
+            "scale",
+            "pca",
+            "neighbors",
+            "umap",
+            "cluster",
+            "markers",
+            "annotation",
+        ]
+        current_node = concat_node
+        for stage in combined_stages:
+            current_node = self.run_rule(stage, current_node, effective_params=params, **params)
+            if stage == request.target_stage:
+                return current_node
+        raise ValueError(f"Unable to resolve multi-sample target '{request.target_stage}'.")
+
+    def sample_stage_params(self, params: Dict[str, Any], sample_id: str) -> Dict[str, Any]:
+        """Apply one sample's override mapping on top of global parameters."""
+        return {**params, **params.get("sample_overrides", {}).get(sample_id, {})}
+
+    def register_or_reuse_sample_raw(
+        self,
+        data_path: str,
+        sample_id: str,
+        effective_params: Dict[str, Any],
+    ) -> str:
+        """Register one raw sample rather than an already concatenated dataset."""
+        raw_params = {
+            "data_path": data_path,
+            "sample_id": sample_id,
+            "sample_key": effective_params.get("sample_key", "sample"),
+        }
+        raw_hash = compute_step_hash(self.manager, "raw", "init", raw_params)
+        if raw_hash in self.manager.hash_index:
+            return self.manager.hash_index[raw_hash]
+        self.ctx.log("info", "sc_pipeline", f"Loading sample '{sample_id}' from {data_path}.")
+        adata = self.io.read_input_data(data_path)
+        adata.var_names_make_unique()
+        adata.obs[raw_params["sample_key"]] = sample_id
+        return self.manager.register_new_object(
+            adata=adata,
+            parent_id=None,
+            action="raw",
+            params=raw_params,
+            hash_val=raw_hash,
+            effective_params=effective_params,
+        )
+
+    def run_concat(
+        self,
+        parent_ids: list[str],
+        params: Dict[str, Any],
+        source_stage: str,
+        preview: bool,
+    ) -> str:
+        """Create a preview or canonical multi-parent concat node."""
+        concat_params = {
+            "sample_ids": params["sample_ids"],
+            "sample_key": params["sample_key"],
+            "multi_sample_join": params["multi_sample_join"],
+            "source_stage": source_stage,
+            "preview": preview,
+        }
+        if not preview:
+            concat_params["min_cells"] = params["min_cells"]
+        return self.run_rule(
+            "concat",
+            parent_ids,
+            effective_params=params,
+            **concat_params,
+        )
+
     def select_nearest_compatible_ancestor(self, request: PipelineRequest) -> Optional[str]:
         """Find the nearest exact cached ancestor before `resolve_request` rebuilds."""
         mgr = self.manager
@@ -259,24 +444,7 @@ class SingleCellPipelineRunner:
         if target_raw_hash in mgr.hash_index:
             return mgr.hash_index[target_raw_hash]
 
-        data_paths = params.get("data_paths")
         data_path = params.get("data_path")
-        if data_paths:
-            self.ctx.log("info", "sc_pipeline", f"Loading {len(data_paths)} samples.")
-            adata = self.io.read_multi_input_data(
-                data_paths=data_paths,
-                sample_ids=params.get("sample_ids"),
-                sample_key=params.get("sample_key"),
-                join=params.get("multi_sample_join"),
-            )
-            raw_params = {
-                "data_paths": data_paths,
-                "sample_ids": params.get("sample_ids"),
-                "sample_key": params.get("sample_key"),
-                "multi_sample_join": params.get("multi_sample_join"),
-            }
-            return self.register_raw(adata, path=None, params=raw_params)
-
         if data_path:
             self.ctx.log("info", "sc_pipeline", f"Loading data from {data_path}.")
             adata = self.io.read_input_data(data_path)
@@ -295,38 +463,64 @@ class SingleCellPipelineRunner:
             raise ValueError(f"Start stage '{start_stage}' is not compatible with target '{target}'.") from exc
         return dependency_chain[start_index + 1 :]
 
-    def run_rule(self, rule_name: str, parent_id: str, **params: Any) -> str:
-        """Run one rule for `ensure`, or reuse the child with the same step hash."""
+    def run_rule(
+        self,
+        rule_name: str,
+        parent_id: Any,
+        effective_params: Optional[Dict[str, Any]] = None,
+        **params: Any,
+    ) -> str:
+        """Run one rule with one or many ordered parents, or reuse its hash."""
         mgr = self.manager
-        parent_hash = mgr.graph.nodes[parent_id].get("hash", "init") if parent_id else "init"
+        if parent_id is None:
+            parent_ids: list[str] = []
+        elif isinstance(parent_id, str):
+            parent_ids = [parent_id]
+        elif isinstance(parent_id, Sequence):
+            parent_ids = list(parent_id)
+        else:
+            raise ValueError("parent_id must be a node ID or an ordered sequence of node IDs.")
+        if not parent_ids:
+            parent_hash: Any = "init"
+        elif len(parent_ids) == 1:
+            parent_hash = mgr.graph.nodes[parent_ids[0]].get("hash", "init")
+        else:
+            parent_hash = [mgr.graph.nodes[item].get("hash", "init") for item in parent_ids]
         hash_val = compute_step_hash(mgr, rule_name, parent_hash, params)
 
         if hash_val in mgr.hash_index:
-            return mgr.hash_index[hash_val]
+            node_id = mgr.hash_index[hash_val]
+            mgr.update_effective_params(node_id, effective_params)
+            return node_id
 
         rule = mgr.registry.get(rule_name)
-        rule_params = {key: value for key, value in params.items() if key in rule.param_keys}
-        adata, result_type, *result_keys = rule.func(mgr, parent_id, **rule_params)
+        rule_params = {key: value for key, value in params.items() if key in rule.call_param_keys}
+        rule_parent = parent_ids[0] if len(parent_ids) == 1 else parent_ids
+        adata, result_type, *result_keys = rule.func(mgr, rule_parent, **rule_params)
         result_key = result_keys[0] if result_keys else None
 
         if result_type == "new_object":
             return mgr.register_new_object(
                 adata=adata,
-                parent_id=parent_id,
+                parent_id=None,
+                parent_ids=parent_ids,
                 action=rule_name,
                 params=rule_params,
                 hash_val=hash_val,
                 result_key=result_key,
+                effective_params=effective_params,
             )
         if result_type == "virtual":
             return mgr.register_new_object(
                 adata=adata,
-                parent_id=parent_id,
+                parent_id=None,
+                parent_ids=parent_ids,
                 action=rule_name,
                 params=rule_params,
                 result_key=result_key,
                 hash_val=hash_val,
                 is_virtual=True,
+                effective_params=effective_params,
             )
 
         raise ValueError(f"Unknown rule result type: {result_type}")
@@ -359,6 +553,7 @@ class SingleCellPipelineRunner:
             action="raw",
             params=raw_params,
             hash_val=hash_val,
+            effective_params=raw_params,
         )
 
 

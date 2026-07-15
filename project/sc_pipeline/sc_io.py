@@ -37,30 +37,6 @@ class SingleCellIO:
             return sc.read_10x_mtx(data_path, var_names="gene_symbols", cache=False)
         return sc.read(data_path)
 
-    def read_multi_input_data(self, data_paths, sample_ids, sample_key, join):
-        """Load and concatenate the samples supplied to the pipeline runner."""
-        adatas = {}
-        for data_path, sample_id in zip(data_paths, sample_ids):
-            adata = self.read_input_data(data_path)
-            adata.var_names_make_unique()
-            adata.obs[sample_key] = sample_id
-            adatas[sample_id] = adata
-
-        combined = sc.concat(
-            adatas,
-            label=sample_key,
-            index_unique="-",
-            join=join,
-            merge="same",
-        )
-        combined.uns["multi_sample"] = {
-            "sample_key": sample_key,
-            "sample_ids": sample_ids,
-            "data_paths": data_paths,
-            "join": join,
-        }
-        return combined
-
     def visualize_result(self, mgr: Any, node_id: str, stage: str):
         """Publish plots and a summary after the runner selects its result node."""
         mgr.active_node_id = node_id
@@ -70,7 +46,15 @@ class SingleCellIO:
 
         initial_fig = fig = plt.figure(figsize=(6, 5))
         if stage == "scrublet":
-            if "doublet_score" in adata.obs:
+            multi_info = adata.uns.get("multi_sample", {})
+            sample_key = multi_info.get("sample_key")
+            if "doublet_score" in adata.obs and sample_key in adata.obs:
+                for sample_id, values in adata.obs.groupby(sample_key, observed=True)["doublet_score"]:
+                    plt.hist(values, bins=30, alpha=0.45, label=str(sample_id))
+                plt.xlabel("Doublet score")
+                plt.ylabel("Cells")
+                plt.legend(title=sample_key)
+            elif "doublet_score" in adata.obs:
                 sc.pl.scrublet_score_distribution(adata, show=False)
             elif adata.uns.get("scrublet", {}).get("status") == "skipped":
                 self.draw_center_message(
@@ -269,7 +253,7 @@ class SingleCellIO:
         if result_key in adata.obs:
             return result_key
 
-        lineage = mgr.lineage_to_node(node_id)
+        lineage = mgr.ancestry_to_node(node_id)
         for ancestor_id in reversed(lineage):
             ancestor_key = mgr.graph.nodes[ancestor_id].get("result_key")
             if ancestor_key in adata.obs:
@@ -290,7 +274,7 @@ class SingleCellIO:
         adata = mgr.get_object(node_id)
         node_meta = mgr.graph.nodes[node_id]
         result_key = node_meta.get("result_key")
-        lineage = mgr.lineage_to_node(node_id)
+        lineage = mgr.ancestry_to_node(node_id)
         integration = "none"
         for lineage_node_id in lineage:
             lineage_meta = mgr.graph.nodes[lineage_node_id]
@@ -391,6 +375,11 @@ class SingleCellIO:
             display_action = action.replace("_", "\n")
             params = attr.get("params", {})
             details = self.dag_label_details(action, params)
+            raw_nodes = mgr.raw_ancestors(node_id)
+            if action in {"raw", "scrublet", "qc"} and len(raw_nodes) == 1:
+                sample_id = mgr.graph.nodes[raw_nodes[0]].get("params", {}).get("sample_id")
+                if sample_id:
+                    details += f"\n{sample_id}"
             if node_id in active_lineage or node_id == current_node:
                 labels[node_id] = f"[{short_id}]\n{display_action}{details}"
             else:
@@ -438,6 +427,17 @@ class SingleCellIO:
         """Align the active path and keep each cached branch on a stable row."""
         active_lineage = mgr.ancestors_including_self(current_node)
         stage_columns = self.stage_columns(mgr)
+        active_raws = [item for item in mgr.raw_ancestors(current_node) if item in active_lineage]
+        lane_gap = 1.35
+        active_lanes = {
+            raw_id: ((len(active_raws) - 1) / 2 - index) * lane_gap
+            for index, raw_id in enumerate(active_raws)
+        }
+        active_concats = [
+            item
+            for item in active_lineage
+            if mgr.graph.nodes[item].get("action") == "concat"
+        ]
         inactive_nodes = set(mgr.graph.nodes) - active_lineage
         branch_ends = [
             node_id
@@ -447,12 +447,13 @@ class SingleCellIO:
         branch_ends.sort(
             key=lambda node_id: (
                 self.same_source_priority(mgr, current_node, node_id),
-                mgr.raw_ancestor(node_id) or "",
-                tuple(mgr.lineage_to_node(node_id)),
+                tuple(mgr.raw_ancestors(node_id)),
+                tuple(mgr.ancestry_to_node(node_id)),
             )
         )
+        lowest_active_lane = min(active_lanes.values(), default=0.0)
         branch_rows = {
-            node_id: -1.4 - index * 1.15
+            node_id: lowest_active_lane - 1.6 - index * 1.15
             for index, node_id in enumerate(branch_ends)
         }
 
@@ -461,7 +462,19 @@ class SingleCellIO:
             stage = attr.get("action", "?")
             x = stage_columns.get(stage, len(stage_columns) * 1.25)
             if node_id in active_lineage:
-                pos[node_id] = (x, 0.0)
+                is_after_concat = any(
+                    concat_id == node_id or concat_id in mgr.ancestors(node_id)
+                    for concat_id in active_concats
+                )
+                if is_after_concat or len(active_raws) <= 1:
+                    pos[node_id] = (x, 0.0)
+                else:
+                    contributing_raws = [
+                        raw_id
+                        for raw_id in active_raws
+                        if raw_id == node_id or raw_id in mgr.ancestors(node_id)
+                    ]
+                    pos[node_id] = (x, active_lanes.get(contributing_raws[0], 0.0))
                 continue
 
             descendants = mgr.descendants(node_id)
@@ -479,7 +492,22 @@ class SingleCellIO:
 
     def stage_columns(self, mgr: Any) -> Dict[str, float]:
         """Assign x-positions to known and discovered DAG stages."""
-        known_order = ["raw"] + list(mgr.dependency_chain("annotation")[1:])
+        known_order = [
+            "raw",
+            "scrublet",
+            "qc",
+            "concat",
+            "normalize",
+            "hvg",
+            "batch_correct",
+            "scale",
+            "pca",
+            "neighbors",
+            "umap",
+            "cluster",
+            "markers",
+            "annotation",
+        ]
         seen = set()
         ordered_stages = []
         for stage in known_order:
@@ -499,14 +527,17 @@ class SingleCellIO:
 
     def same_source_priority(self, mgr: Any, current_node: str, node_id: str) -> int:
         """Prefer DAG branches rooted in the same raw dataset as the active node."""
-        current_raw = mgr.raw_ancestor(current_node)
-        node_raw = mgr.raw_ancestor(node_id)
-        return 0 if current_raw == node_raw else 1
+        current_raws = frozenset(mgr.raw_ancestors(current_node))
+        node_raws = frozenset(mgr.raw_ancestors(node_id))
+        return 0 if current_raws == node_raws else 1
 
     def dag_label_details(self, action: str, params: Dict[str, Any]) -> str:
         """Add concise stage-specific parameter hints to highlighted DAG node labels."""
         if action == "qc":
             return f"\nmin={params.get('qc_min_genes', '?')}"
+        if action == "concat":
+            preview = "preview" if params.get("preview") else params.get("multi_sample_join", "inner")
+            return f"\n{preview}\nn={len(params.get('sample_ids') or [])}"
         if action == "scrublet":
             return f"\nrate={params.get('scrublet_expected_doublet_rate', '?')}"
         if action == "hvg":

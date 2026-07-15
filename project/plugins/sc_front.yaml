@@ -5,15 +5,16 @@ enabled: true
 required: false
 description: >-
   Smart single-cell RNA-seq DAG pipeline manager. Use this plugin to load data
-  and run discrete cached analysis steps: raw, scrublet, qc, normalize, hvg,
+  and run discrete cached analysis steps: raw, scrublet, qc, concat, normalize, hvg,
   batch_correct, scale, pca, neighbors, umap, cluster, markers, and annotation.
   Selecting a downstream target_stage automatically executes missing upstream steps. If the user
   changes parameters for one step, the DAG reuses valid cached ancestors and
   creates a new branch from the changed step instead of rerunning unaffected work.
-  Multi-sample runs are supported with data_paths and sample_ids. Samples are
-  concatenated with scanpy/anndata concat, annotated in adata.obs[sample_key],
-  and processed through the same downstream DAG. For multi-sample runs, Scrublet
-  and HVG selection default to using sample_key as their batch key. Integration
+  Multi-sample runs are supported with data_paths and sample_ids. Each sample is
+  loaded, processed by Scrublet, and cell-QC filtered on its own DAG branch.
+  The branches merge at an explicit multi-parent concat node, where low-detection
+  genes are filtered across the combined cells. HVG selection defaults to using
+  sample_key as its batch key after concatenation. Integration
   defaults to BBKNN for multiple samples and ordinary neighbors for one sample.
   ComBat can be selected explicitly to adjust expression before PCA; BBKNN
   changes only the neighbor graph after PCA.
@@ -23,6 +24,9 @@ description: >-
   set scrublet_filter_doublets=true to remove predicted doublets before QC.
   Scrublet is preferred but optional: if it fails and scrublet_skip_on_failure=true,
   the pipeline records the failure in adata.uns["scrublet"] and continues downstream.
+  Use sample_overrides to change Scrublet or cell-QC parameters for selected samples.
+  Multi-sample raw and scrublet targets return one AnnData through a preview concat;
+  qc and concat targets return the canonical post-QC combined AnnData.
   Resolution controls Leiden/Louvain clustering, not the UMAP embedding itself.
   For requests like "change the UMAP resolution to 0.7", call target_stage="cluster"
   or target_stage="markers" with resolution=0.7 so the final UMAP is colored by
@@ -39,6 +43,7 @@ description: >-
 examples:
   adata, summary = sc_front(data_path="project/data/test_data.h5ad", target_stage="cluster", resolution=0.5)
   adata, summary = sc_front(data_paths=["/data/sample1", "/data/sample2"], sample_ids=["sample1", "sample2"], target_stage="markers")
+  adata, summary = sc_front(data_paths=["/data/sample1", "/data/sample2"], target_stage="concat", sample_overrides={"sample_2":{"qc_mt_pct":15}})
   adata, summary = sc_front(data_paths=["/data/sample1", "/data/sample2"], target_stage="umap", integration_method="combat")
   adata, summary = sc_front(data_path="project/data/test_data.h5ad", target_stage="scrublet")
   adata, summary = sc_front(target_stage="cluster", resolution=0.8)
@@ -51,7 +56,7 @@ parameters:
     type: str
     required: true
     description: >-
-      Target DAG stage. Options are raw, scrublet, qc, normalize, hvg,
+      Target DAG stage. Options are raw, scrublet, qc, concat, normalize, hvg,
       batch_correct, scale, pca, neighbors, umap, cluster, markers, and annotation.
 
   - name: data_path
@@ -83,11 +88,22 @@ parameters:
     default: inner
     description: Gene join mode for concatenating samples. Use inner for shared genes or outer for union.
 
+  - name: sample_overrides
+    type: dict
+    required: false
+    default: null
+    description: >-
+      Optional mapping from sample ID to Scrublet or cell-QC parameter overrides.
+      Global parameters remain defaults for samples without an override.
+
   - name: scrublet_batch_key
     type: str
     required: false
     default: null
-    description: Optional obs column used for batch-aware Scrublet doublet detection.
+    description: >-
+      Optional obs column used for batch-aware Scrublet within one input sample.
+      Multi-sample runs already execute Scrublet separately per input and do not
+      default this to sample_key.
 
   - name: scrublet_expected_doublet_rate
     type: float
@@ -141,7 +157,9 @@ parameters:
     type: int
     required: false
     default: 3
-    description: Minimum cells per gene for QC filtering.
+    description: >-
+      Minimum cells per gene. For multi-sample runs this is applied after concat
+      across all retained cells; for single-sample runs it remains part of QC.
 
   - name: target_sum
     type: float

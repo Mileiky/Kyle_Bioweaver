@@ -1,0 +1,160 @@
+{
+  "active_node": "node_d00b2b81",
+  "final_shape": [
+    13337,
+    2000
+  ],
+  "sample_counts": {
+    "pbmc10k": 10639,
+    "pbmc3k": 2698
+  },
+  "cluster_key": "leiden_res0.5",
+  "cluster_counts": {
+    "0": 4137,
+    "1": 412,
+    "2": 3319,
+    "3": 765,
+    "4": 1814,
+    "5": 617,
+    "6": 1406,
+    "7": 131,
+    "8": 552,
+    "9": 184
+  },
+  "marker_key": "markers_leiden_res0.5_wilcoxon_25",
+  "raw_shapes": {
+    "pbmc10k": [
+      11769,
+      33538
+    ],
+    "pbmc3k": [
+      2700,
+      32738
+    ]
+  },
+  "qc_shapes": {
+    "pbmc10k": [
+      10639,
+      33538
+    ],
+    "pbmc3k": [
+      2698,
+      32738
+    ]
+  },
+  "lineage": [
+    {
+      "node_id": "node_e6d32758",
+      "action": "raw",
+      "parents": []
+    },
+    {
+      "node_id": "node_7ce03ad8",
+      "action": "scrublet",
+      "parents": [
+        "node_e6d32758"
+      ]
+    },
+    {
+      "node_id": "node_df92b9f3",
+      "action": "qc",
+      "parents": [
+        "node_7ce03ad8"
+      ]
+    },
+    {
+      "node_id": "node_347286e8",
+      "action": "raw",
+      "parents": []
+    },
+    {
+      "node_id": "node_50f00df2",
+      "action": "scrublet",
+      "parents": [
+        "node_347286e8"
+      ]
+    },
+    {
+      "node_id": "node_e743283c",
+      "action": "qc",
+      "parents": [
+        "node_50f00df2"
+      ]
+    },
+    {
+      "node_id": "node_aa68ce0f",
+      "action": "concat",
+      "parents": [
+        "node_df92b9f3",
+        "node_e743283c"
+      ]
+    },
+    {
+      "node_id": "node_c9621ec7",
+      "action": "normalize",
+      "parents": [
+        "node_aa68ce0f"
+      ]
+    },
+    {
+      "node_id": "node_2e07fe48",
+      "action": "hvg",
+      "parents": [
+        "node_c9621ec7"
+      ]
+    },
+    {
+      "node_id": "node_55c2e43b",
+      "action": "batch_correct",
+      "parents": [
+        "node_2e07fe48"
+      ]
+    },
+    {
+      "node_id": "node_079a8f93",
+      "action": "scale",
+      "parents": [
+        "node_55c2e43b"
+      ]
+    },
+    {
+      "node_id": "node_b497a56f",
+      "action": "pca",
+      "parents": [
+        "node_079a8f93"
+      ]
+    },
+    {
+      "node_id": "node_10701168",
+      "action": "neighbors",
+      "parents": [
+        "node_b497a56f"
+      ]
+    },
+    {
+      "node_id": "node_539f8d83",
+      "action": "umap",
+      "parents": [
+        "node_10701168"
+      ]
+    },
+    {
+      "node_id": "node_1cab86c0",
+      "action": "cluster",
+      "parents": [
+        "node_539f8d83"
+      ]
+    },
+    {
+      "node_id": "node_d00b2b81",
+      "action": "markers",
+      "parents": [
+        "node_1cab86c0"
+      ]
+    }
+  ],
+  "parameters": {
+    "qc_max_genes": 5000,
+    "qc_mt_pct": 15
+  }
+}

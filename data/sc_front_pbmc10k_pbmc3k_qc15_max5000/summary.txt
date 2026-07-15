@@ -1,0 +1,7 @@
+Stage 'markers' complete.
+- Active node: node_d00b2b81
+- Data shape: 13337 cells x 2000 genes
+- Integration: BBKNN neighbor graph (batch key: sample)
+- Result key: markers_leiden_res0.5_wilcoxon_25
+- Cached DAG nodes: 16
+- Lineage nodes considered: 16
