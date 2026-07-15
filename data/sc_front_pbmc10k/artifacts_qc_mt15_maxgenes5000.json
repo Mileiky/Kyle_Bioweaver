@@ -1,0 +1,20 @@
+[
+  {
+    "name": "Analysis_Result",
+    "path": "/Users/kyleyang/Bioweaver/data/sc_front_pbmc10k/artifacts/result_node_4b42cb6a.png",
+    "type": "image",
+    "description": "Plot for markers."
+  },
+  {
+    "name": "Final_UMAP",
+    "path": "/Users/kyleyang/Bioweaver/data/sc_front_pbmc10k/artifacts/result_final_umap_node_4b42cb6a.png",
+    "type": "image",
+    "description": "Final UMAP plot colored by leiden_res0.5."
+  },
+  {
+    "name": "Pipeline_State",
+    "path": "/Users/kyleyang/Bioweaver/data/sc_front_pbmc10k/artifacts/result_pipeline_dag_node_4b42cb6a.png",
+    "type": "image",
+    "description": "Current pipeline DAG."
+  }
+]

@@ -1,0 +1,458 @@
+{
+  "active_node_id": "node_4b42cb6a",
+  "edges": [
+    [
+      "node_1a81c504",
+      "node_7575454f"
+    ],
+    [
+      "node_7575454f",
+      "node_48b387a6"
+    ],
+    [
+      "node_7575454f",
+      "node_a1d55c1d"
+    ],
+    [
+      "node_48b387a6",
+      "node_202f291b"
+    ],
+    [
+      "node_202f291b",
+      "node_3113776f"
+    ],
+    [
+      "node_3113776f",
+      "node_38f9c450"
+    ],
+    [
+      "node_38f9c450",
+      "node_2babb44c"
+    ],
+    [
+      "node_2babb44c",
+      "node_6ac018fa"
+    ],
+    [
+      "node_6ac018fa",
+      "node_4a5af0e8"
+    ],
+    [
+      "node_4a5af0e8",
+      "node_3f460a32"
+    ],
+    [
+      "node_3f460a32",
+      "node_8205ea18"
+    ],
+    [
+      "node_8205ea18",
+      "node_f645910b"
+    ],
+    [
+      "node_a1d55c1d",
+      "node_117a29b3"
+    ],
+    [
+      "node_117a29b3",
+      "node_5165afcb"
+    ],
+    [
+      "node_5165afcb",
+      "node_96f77767"
+    ],
+    [
+      "node_96f77767",
+      "node_1add4b0f"
+    ],
+    [
+      "node_1add4b0f",
+      "node_6eeacba6"
+    ],
+    [
+      "node_6eeacba6",
+      "node_da6016e1"
+    ],
+    [
+      "node_da6016e1",
+      "node_919673c1"
+    ],
+    [
+      "node_919673c1",
+      "node_11105e5b"
+    ],
+    [
+      "node_11105e5b",
+      "node_4b42cb6a"
+    ]
+  ],
+  "nodes": [
+    {
+      "action": "raw",
+      "hash": "a5fec70e5a85551c792bef4ef4aec7b5",
+      "id": "node_1a81c504",
+      "is_virtual": false,
+      "obj_ref": "obj_284d1705",
+      "params": {
+        "data_path": "/Users/kyleyang/data/pbmc_10k_v3_filtered_feature_bc_matrix/filtered_feature_bc_matrix/"
+      },
+      "result_key": null,
+      "shape": [
+        11769,
+        33538
+      ]
+    },
+    {
+      "action": "scrublet",
+      "hash": "8906da0a5c28bb3de3ac67c9ef1f7e1b",
+      "id": "node_7575454f",
+      "is_virtual": false,
+      "obj_ref": "obj_0d13067b",
+      "params": {
+        "scrublet_batch_key": null,
+        "scrublet_expected_doublet_rate": 0.05,
+        "scrublet_filter_doublets": false,
+        "scrublet_n_prin_comps": 30,
+        "scrublet_skip_on_failure": true,
+        "scrublet_threshold": null
+      },
+      "result_key": "scrublet",
+      "shape": [
+        11769,
+        33538
+      ]
+    },
+    {
+      "action": "qc",
+      "hash": "81b285071f4cc6574ba4d3f75d608cb0",
+      "id": "node_48b387a6",
+      "is_virtual": false,
+      "obj_ref": "obj_1dc34891",
+      "params": {
+        "min_cells": 3,
+        "qc_max_genes": 2500,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 5
+      },
+      "result_key": null,
+      "shape": [
+        191,
+        20293
+      ]
+    },
+    {
+      "action": "normalize",
+      "hash": "dd6596376f421dd85365fa459cb20883",
+      "id": "node_202f291b",
+      "is_virtual": false,
+      "obj_ref": "obj_c1a7d23c",
+      "params": {
+        "target_sum": 10000.0
+      },
+      "result_key": null,
+      "shape": [
+        191,
+        20293
+      ]
+    },
+    {
+      "action": "hvg",
+      "hash": "fa166d1f6ecc50fe4875d87fb5c50007",
+      "id": "node_3113776f",
+      "is_virtual": false,
+      "obj_ref": "obj_774cbf26",
+      "params": {
+        "hvg_batch_key": null,
+        "hvg_flavor": "seurat",
+        "n_hvg": 2000
+      },
+      "result_key": null,
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "batch_correct",
+      "hash": "f38bbb88e6f528a6bae80f517402bf01",
+      "id": "node_38f9c450",
+      "is_virtual": false,
+      "obj_ref": "obj_3d6550f3",
+      "params": {
+        "batch_correction_method": "none",
+        "combat_key": null,
+        "sample_key": "sample"
+      },
+      "result_key": "batch_correction_none",
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "scale",
+      "hash": "9a2ee578821df7ab62d1cb7c9e8cb2c1",
+      "id": "node_2babb44c",
+      "is_virtual": false,
+      "obj_ref": "obj_d2b9cd4a",
+      "params": {
+        "max_scale_value": 10,
+        "regress_out": true
+      },
+      "result_key": null,
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "pca",
+      "hash": "ce6e945ec8e67ca88c7ebe9f157cecb7",
+      "id": "node_6ac018fa",
+      "is_virtual": false,
+      "obj_ref": "obj_2048eb87",
+      "params": {
+        "n_comps": 50
+      },
+      "result_key": "X_pca",
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "neighbors",
+      "hash": "9c747a46535d7f5cdb42c1a2475e6494",
+      "id": "node_4a5af0e8",
+      "is_virtual": false,
+      "obj_ref": "obj_25c5f84c",
+      "params": {
+        "integration_batch_key": null,
+        "integration_method": "none",
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "use_rep": "X_pca"
+      },
+      "result_key": "neighbors",
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "umap",
+      "hash": "872a57a88bf22a5aedebb9098aae0f3c",
+      "id": "node_3f460a32",
+      "is_virtual": false,
+      "obj_ref": "obj_1da75ac0",
+      "params": {
+        "min_dist": 0.5,
+        "spread": 1.0
+      },
+      "result_key": "X_umap",
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "cluster",
+      "hash": "01b60aeaa84a3e50bc49db6c89e641de",
+      "id": "node_8205ea18",
+      "is_virtual": true,
+      "obj_ref": "obj_3a9a2673",
+      "params": {
+        "cluster_method": "leiden",
+        "resolution": 0.5
+      },
+      "result_key": "leiden_res0.5",
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "markers",
+      "hash": "3e6bb203bb28daedd3558aa1c9378b48",
+      "id": "node_f645910b",
+      "is_virtual": false,
+      "obj_ref": "obj_9e5d1621",
+      "params": {
+        "groupby": null,
+        "marker_method": "wilcoxon",
+        "n_marker_genes": 25
+      },
+      "result_key": "markers_leiden_res0.5_wilcoxon_25",
+      "shape": [
+        191,
+        2000
+      ]
+    },
+    {
+      "action": "qc",
+      "hash": "173e0a4eb897cf718105f099162c4baa",
+      "id": "node_a1d55c1d",
+      "is_virtual": false,
+      "obj_ref": "obj_0e2b5e6f",
+      "params": {
+        "min_cells": 3,
+        "qc_max_genes": 5000,
+        "qc_min_genes": 200,
+        "qc_mt_pct": 15
+      },
+      "result_key": null,
+      "shape": [
+        10638,
+        20293
+      ]
+    },
+    {
+      "action": "normalize",
+      "hash": "b5b295593d00f84ae229f67c7fc03459",
+      "id": "node_117a29b3",
+      "is_virtual": false,
+      "obj_ref": "obj_d62c38ac",
+      "params": {
+        "target_sum": 10000.0
+      },
+      "result_key": null,
+      "shape": [
+        10638,
+        20293
+      ]
+    },
+    {
+      "action": "hvg",
+      "hash": "663a6be4730708e27643bf3717eb7538",
+      "id": "node_5165afcb",
+      "is_virtual": false,
+      "obj_ref": "obj_74368c95",
+      "params": {
+        "hvg_batch_key": null,
+        "hvg_flavor": "seurat",
+        "n_hvg": 2000
+      },
+      "result_key": null,
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "batch_correct",
+      "hash": "3b9d3da9cdaf3217677354969e129c68",
+      "id": "node_96f77767",
+      "is_virtual": false,
+      "obj_ref": "obj_a753fdf9",
+      "params": {
+        "batch_correction_method": "none",
+        "combat_key": null,
+        "sample_key": "sample"
+      },
+      "result_key": "batch_correction_none",
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "scale",
+      "hash": "0057fb7f8ee2b712cce84b259b04e523",
+      "id": "node_1add4b0f",
+      "is_virtual": false,
+      "obj_ref": "obj_c4f19d0f",
+      "params": {
+        "max_scale_value": 10,
+        "regress_out": true
+      },
+      "result_key": null,
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "pca",
+      "hash": "30bac6ea6945f3f563cb5464903faa63",
+      "id": "node_6eeacba6",
+      "is_virtual": false,
+      "obj_ref": "obj_6099069a",
+      "params": {
+        "n_comps": 50
+      },
+      "result_key": "X_pca",
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "neighbors",
+      "hash": "b26730b4506bb58ef3b8e6d90991ea2f",
+      "id": "node_da6016e1",
+      "is_virtual": false,
+      "obj_ref": "obj_75fb9166",
+      "params": {
+        "integration_batch_key": null,
+        "integration_method": "none",
+        "n_neighbors": 10,
+        "n_pcs": 40,
+        "use_rep": "X_pca"
+      },
+      "result_key": "neighbors",
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "umap",
+      "hash": "477685a7c114f871f107e32306a305cc",
+      "id": "node_919673c1",
+      "is_virtual": false,
+      "obj_ref": "obj_ff01edb9",
+      "params": {
+        "min_dist": 0.5,
+        "spread": 1.0
+      },
+      "result_key": "X_umap",
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "cluster",
+      "hash": "2e1a97d9b083ad8a00d399d5de3c6539",
+      "id": "node_11105e5b",
+      "is_virtual": true,
+      "obj_ref": "obj_cbf58ee8",
+      "params": {
+        "cluster_method": "leiden",
+        "resolution": 0.5
+      },
+      "result_key": "leiden_res0.5",
+      "shape": [
+        10638,
+        2000
+      ]
+    },
+    {
+      "action": "markers",
+      "hash": "5881a81fa5ab2fae43c702788c703055",
+      "id": "node_4b42cb6a",
+      "is_virtual": false,
+      "obj_ref": "obj_08a856b1",
+      "params": {
+        "groupby": null,
+        "marker_method": "wilcoxon",
+        "n_marker_genes": 25
+      },
+      "result_key": "markers_leiden_res0.5_wilcoxon_25",
+      "shape": [
+        10638,
+        2000
+      ]
+    }
+  ]
+}

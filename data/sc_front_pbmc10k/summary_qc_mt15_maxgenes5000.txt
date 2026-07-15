@@ -1,0 +1,7 @@
+Stage 'markers' complete.
+- Active node: node_4b42cb6a
+- Data shape: 10638 cells x 2000 genes
+- Integration: none
+- Result key: markers_leiden_res0.5_wilcoxon_25
+- Cached DAG nodes: 22
+- Lineage nodes considered: 12
