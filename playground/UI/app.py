@@ -1,9 +1,12 @@
 import atexit
+import asyncio
 import functools
 import json
 import os
 import re
+import shutil
 import sys
+import tempfile
 from typing import Any, Dict, List, Optional, Tuple, Union
 
 import requests
@@ -28,6 +31,7 @@ except Exception:
 repo_path = os.path.join(os.path.dirname(__file__), "../../")
 sys.path.append(repo_path)
 from taskweaver.app.app import TaskWeaverApp
+from taskweaver.app.session_lifecycle import SessionLifecycle
 from taskweaver.memory.attachment import AttachmentType
 from taskweaver.memory.type_vars import RoleName
 from taskweaver.module.event_emitter import PostEventType, RoundEventType, SessionEventHandlerBase
@@ -39,11 +43,12 @@ workspace_path = os.path.join(project_path, "workspace")
 os.environ.setdefault("CHAINLIT_AUTH_SECRET", "taskweaver-local-dev-auth-secret")
 app = TaskWeaverApp(app_dir=project_path, use_local_uri=True)
 atexit.register(app.stop)
-app_session_dict: Dict[str, Session] = {}
+lifecycle = SessionLifecycle(app)
 session_map_path = os.path.join(project_path, "workspace", "ui_session_map.json")
+session_map_lock = asyncio.Lock()
 
-
-cl_data._data_layer = LocalChainlitDataLayer(base_path=os.path.join(workspace_path, "chainlit_data"))
+local_data_layer = LocalChainlitDataLayer(base_path=os.path.join(workspace_path, "chainlit_data"))
+cl_data._data_layer = local_data_layer
 
 
 @cl.password_auth_callback
@@ -59,15 +64,30 @@ def auth_callback(username: str, password: str) -> Optional[cl.User]:
 def load_session_map() -> Dict[str, str]:
     if not os.path.exists(session_map_path):
         return {}
-    with open(session_map_path, "r") as f:
-        data = json.load(f)
+    try:
+        with open(session_map_path, "r") as f:
+            data = json.load(f)
+    except (json.JSONDecodeError, OSError):
+        return {}
     return data if isinstance(data, dict) else {}
 
 
 def save_session_map(session_map: Dict[str, str]) -> None:
     os.makedirs(os.path.dirname(session_map_path), exist_ok=True)
-    with open(session_map_path, "w") as f:
-        json.dump(session_map, f)
+    fd, temp_path = tempfile.mkstemp(
+        dir=os.path.dirname(session_map_path),
+        prefix=f".{os.path.basename(session_map_path)}.",
+        suffix=".tmp",
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            json.dump(session_map, f)
+            f.flush()
+            os.fsync(f.fileno())
+        os.replace(temp_path, session_map_path)
+    finally:
+        if os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def elem(name: str, cls: str = "", attr: Dict[str, str] = {}, **attr_dic: str):
@@ -102,13 +122,30 @@ blinking_cursor = span("tw-end-cursor")()
 
 def file_display(files: List[Tuple[str, str]], session_cwd_path: str):
     elements: List[cl.Element] = []
+    displayed_paths = set()
     for file_name, file_path in files:
+        resolved_path = file_path if os.path.isabs(file_path) else os.path.join(session_cwd_path, file_path)
+        resolved_path = os.path.realpath(resolved_path)
+        if resolved_path in displayed_paths:
+            continue
+        displayed_paths.add(resolved_path)
+
+        if not os.path.exists(resolved_path):
+            elements.append(
+                cl.Text(
+                    name=file_name,
+                    content=f"Artifact unavailable: {file_name}",
+                    display="inline",
+                ),
+            )
+            continue
+
         # if image, no need to display as another file
         if file_path.endswith((".png", ".jpg", ".jpeg", ".gif", ".svg")):
             image = cl.Image(
                 name=file_path,
                 display="inline",
-                path=file_path if os.path.isabs(file_path) else os.path.join(session_cwd_path, file_path),
+                path=resolved_path,
                 size="large",
             )
             elements.append(image)
@@ -116,18 +153,14 @@ def file_display(files: List[Tuple[str, str]], session_cwd_path: str):
             audio = cl.Audio(
                 name="converted_speech",
                 display="inline",
-                path=file_path if os.path.isabs(file_path) else os.path.join(session_cwd_path, file_path),
+                path=resolved_path,
             )
             elements.append(audio)
         else:
             if file_path.endswith(".csv"):
                 import pandas as pd
 
-                data = (
-                    pd.read_csv(file_path)
-                    if os.path.isabs(file_path)
-                    else pd.read_csv(os.path.join(session_cwd_path, file_path))
-                )
+                data = pd.read_csv(resolved_path)
                 row_count = len(data)
                 table = cl.Text(
                     name=file_path,
@@ -142,7 +175,7 @@ def file_display(files: List[Tuple[str, str]], session_cwd_path: str):
             file = cl.File(
                 name=file_name,
                 display="inline",
-                path=file_path if os.path.isabs(file_path) else os.path.join(session_cwd_path, file_path),
+                path=resolved_path,
             )
             elements.append(file)
     return elements
@@ -198,33 +231,106 @@ async def replay_session_history(session: Session) -> None:
             ).send()
 
 
-async def persist_thread_binding(session: Session, message: Optional[str] = None) -> None:
+async def get_thread_record(thread_id: str) -> Optional[Dict[str, Any]]:
+    user = cl.user_session.get("user")
+    data_layer = cl.data._data_layer
+    if user is None or data_layer is None:
+        return None
+
+    if isinstance(data_layer, LocalChainlitDataLayer):
+        owner_id = data_layer.get_thread_owner_id(thread_id)
+        if owner_id is not None and owner_id != user.identifier:
+            raise PermissionError(f"Thread {thread_id} does not belong to the current user")
+        return await data_layer.get_thread_for_user(thread_id, user.identifier)
+
+    thread = await data_layer.get_thread(thread_id)
+    if thread is None:
+        return None
+    author = await data_layer.get_thread_author(thread_id)
+    if author != user.identifier:
+        raise PermissionError(f"Thread {thread_id} does not belong to the current user")
+    return thread
+
+
+async def get_bound_session_id(
+    thread_id: str,
+    metadata: Optional[Dict[str, Any]] = None,
+) -> Optional[str]:
+    thread = await get_thread_record(thread_id)
+    thread_metadata = (thread or {}).get("metadata") or {}
+    session_id = thread_metadata.get("taskweaver_session_id")
+    if isinstance(session_id, str) and session_id:
+        return session_id
+
+    metadata_session_id = (metadata or {}).get("taskweaver_session_id")
+    if isinstance(metadata_session_id, str) and metadata_session_id:
+        return metadata_session_id
+
+    session_id = load_session_map().get(thread_id)
+    return session_id if isinstance(session_id, str) and session_id else None
+
+
+async def persist_thread_binding(
+    thread_id: str,
+    session: Session,
+    message: Optional[str] = None,
+) -> None:
     user = cl.user_session.get("user")
     if user is None:
         return
 
-    thread_id = context.session.thread_id
-    if thread_id is None:
-        return
-
-    session_map = load_session_map()
-    session_map[thread_id] = session.session_id
-    save_session_map(session_map)
+    async with session_map_lock:
+        session_map = load_session_map()
+        session_map[thread_id] = session.session_id
+        save_session_map(session_map)
 
     existing_name = None
     data_layer = cl.data._data_layer
     if data_layer is not None:
-        thread = await data_layer.get_thread(thread_id)
+        thread = await get_thread_record(thread_id)
         if thread is not None:
             existing_name = thread.get("name")
 
-        thread_name = existing_name or (message.strip()[:80] if message and message.strip() else f"Chat {thread_id[:8]}")
+        thread_name = existing_name or (
+            message.strip()[:80] if message and message.strip() else f"Chat {thread_id[:8]}"
+        )
         await data_layer.update_thread(
             thread_id=thread_id,
             name=thread_name,
             user_id=user.identifier,
             metadata={"taskweaver_session_id": session.session_id},
         )
+
+
+async def replay_history_if_needed(thread_id: str, session: Session) -> None:
+    thread = await get_thread_record(thread_id)
+    if thread is not None and thread.get("steps"):
+        return
+    if session.memory.conversation.rounds:
+        await replay_session_history(session)
+
+
+async def delete_persisted_thread(thread_id: str) -> None:
+    session_id = await get_bound_session_id(thread_id)
+    await lifecycle.delete(thread_id)
+
+    async with session_map_lock:
+        session_map = load_session_map()
+        session_map.pop(thread_id, None)
+        save_session_map(session_map)
+
+    if session_id is None:
+        return
+
+    sessions_root = os.path.realpath(os.path.join(workspace_path, "sessions"))
+    session_workspace = os.path.realpath(os.path.join(sessions_root, session_id))
+    if os.path.commonpath([sessions_root, session_workspace]) != sessions_root:
+        raise ValueError(f"Invalid TaskWeaver session ID: {session_id}")
+    if os.path.isdir(session_workspace):
+        shutil.rmtree(session_workspace)
+
+
+local_data_layer.on_thread_deleted = delete_persisted_thread
 
 
 def is_link_clickable(url: str):
@@ -492,88 +598,80 @@ class ChainLitMessageUpdater(SessionEventHandlerBase):
 
 @cl.on_chat_start
 async def start():
-    user_session_id = context.session.thread_id or cl.user_session.get("id")
-    session_map = load_session_map()
-    taskweaver_session_id = session_map.get(user_session_id)
-    session = app.get_session(session_id=taskweaver_session_id) if taskweaver_session_id is not None else app.get_session()
-    session_map[user_session_id] = session.session_id
-    save_session_map(session_map)
-    app_session_dict[user_session_id] = session
-    print(f"Starting session {session.session_id}")
-    if taskweaver_session_id is not None:
-        await replay_session_history(session)
-    await persist_thread_binding(session)
+    thread_id = context.session.thread_id or cl.user_session.get("id")
+    if not isinstance(thread_id, str) or not thread_id:
+        raise RuntimeError("Chainlit did not provide a thread ID")
+
+    taskweaver_session_id = await get_bound_session_id(thread_id)
+    async with lifecycle.lease(thread_id, taskweaver_session_id) as session:
+        print(f"Starting session {session.session_id}")
+        await persist_thread_binding(thread_id, session)
+        if taskweaver_session_id is not None:
+            await replay_history_if_needed(thread_id, session)
 
 
 @cl.on_chat_resume
 async def on_chat_resume(thread: Dict[str, Any]):
     thread_id = thread["id"]
     metadata = thread.get("metadata") or {}
-    taskweaver_session_id = metadata.get("taskweaver_session_id")
-
-    if taskweaver_session_id is None:
-        session_map = load_session_map()
-        taskweaver_session_id = session_map.get(thread_id)
-
-    session = app.get_session(session_id=taskweaver_session_id) if taskweaver_session_id is not None else app.get_session()
-    app_session_dict[thread_id] = session
-    await persist_thread_binding(session)
+    taskweaver_session_id = await get_bound_session_id(thread_id, metadata)
+    async with lifecycle.lease(thread_id, taskweaver_session_id) as session:
+        await persist_thread_binding(thread_id, session)
+        await replay_history_if_needed(thread_id, session)
 
 
 @cl.on_chat_end
 async def end():
-    user_session_id = context.session.thread_id or cl.user_session.get("id")
-    app_session = app_session_dict.pop(user_session_id, None)
-    if app_session is None:
+    thread_id = context.session.thread_id or cl.user_session.get("id")
+    if not isinstance(thread_id, str) or not thread_id:
         return
-
-    try:
-        session_map = load_session_map()
-        session_map[user_session_id] = app_session.session_id
-        save_session_map(session_map)
-    finally:
-        print(f"Stopping session {app_session.session_id}")
-        app.stop_session(app_session.session_id)
+    session_id = await lifecycle.close(thread_id)
+    if session_id is not None:
+        print(f"Released runtime for session {session_id}")
 
 
 @cl.on_message
 async def main(message: cl.Message):
-    user_session_id = context.session.thread_id or cl.user_session.get("id")  # type: ignore
-    session: Session = app_session_dict[user_session_id]  # type: ignore
-    session_cwd_path = session.execution_cwd
-    await persist_thread_binding(session, message.content)
+    thread_id = context.session.thread_id or cl.user_session.get("id")  # type: ignore
+    if not isinstance(thread_id, str) or not thread_id:
+        raise RuntimeError("Chainlit did not provide a thread ID")
 
-    # display loader before sending message
-    async with cl.Step(name="", show_input=True, root=True) as root_step:
-        response_round = await cl.make_async(session.send_message)(
-            message.content,
-            files=[
-                {
-                    "name": element.name if element.name else "file",
-                    "path": element.path,
-                }
-                for element in message.elements
-                if element.type == "file" or element.type == "image"
-            ],
-            event_handler=ChainLitMessageUpdater(root_step),
-        )
+    taskweaver_session_id = await get_bound_session_id(thread_id)
+    async with lifecycle.lease(thread_id, taskweaver_session_id) as session:
+        session_cwd_path = session.execution_cwd
+        await persist_thread_binding(thread_id, session, message.content)
 
-    artifact_paths = [
-        p
-        for p in response_round.post_list
-        for a in p.attachment_list
-        if a.type == AttachmentType.artifact_paths
-        for p in a.content
-    ]
+        # display loader before sending message
+        async with cl.Step(name="", show_input=True, root=True) as root_step:
+            response_round = await cl.make_async(session.send_message)(
+                message.content,
+                files=[
+                    {
+                        "name": element.name if element.name else "file",
+                        "path": element.path,
+                    }
+                    for element in message.elements
+                    if element.type == "file" or element.type == "image"
+                ],
+                event_handler=ChainLitMessageUpdater(root_step),
+            )
 
-    for post in [p for p in response_round.post_list if p.send_to == "User"]:
-        user_msg_content, files = extract_message_files(post.message, artifact_paths)
-        elements = file_display(files, session_cwd_path)
-        await cl.Message(
-            author="TaskWeaver",
-            content=f"{user_msg_content}",
-            elements=elements if len(elements) > 0 else None,
-        ).send()
+        artifact_paths = [
+            p
+            for p in response_round.post_list
+            for a in p.attachment_list
+            if a.type == AttachmentType.artifact_paths
+            for p in a.content
+        ]
+
+        for post in [p for p in response_round.post_list if p.send_to == "User"]:
+            user_msg_content, files = extract_message_files(post.message, artifact_paths)
+            elements = file_display(files, session_cwd_path)
+            await cl.Message(
+                author="TaskWeaver",
+                content=f"{user_msg_content}",
+                elements=elements if len(elements) > 0 else None,
+            ).send()
 
 
 if __name__ == "__main__":

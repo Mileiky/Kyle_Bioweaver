@@ -24,13 +24,31 @@ def read_yaml(path: str) -> Dict[str, Any]:
 
 
 def write_yaml(path: str, content: Dict[str, Any]):
+    import os
+    import tempfile
+
     import yaml
 
+    temp_path = ""
     try:
-        with open(path, "w") as file:
+        directory = os.path.dirname(os.path.abspath(path))
+        os.makedirs(directory, exist_ok=True)
+        fd, temp_path = tempfile.mkstemp(
+            dir=directory,
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+        )
+        with os.fdopen(fd, "w") as file:
             yaml.safe_dump(content, file, sort_keys=False)
+            file.flush()
+            os.fsync(file.fileno())
+        os.replace(temp_path, path)
+        temp_path = ""
     except Exception as e:
         raise ValueError(f"Yaml writing failed due to: {e}")
+    finally:
+        if temp_path and os.path.exists(temp_path):
+            os.unlink(temp_path)
 
 
 def validate_yaml(content: Any, schema: str) -> bool:

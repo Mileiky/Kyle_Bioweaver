@@ -2,6 +2,25 @@ from taskweaver.memory import Attachment, SharedMemoryEntry
 from taskweaver.memory.attachment import AttachmentType
 
 
+def test_memory_checkpoint_is_atomic_and_reloadable(tmp_path):
+    from taskweaver.memory import Memory, Post, Round
+
+    memory_path = tmp_path / "session_memory.yaml"
+    memory = Memory(session_id="session-1")
+    round = Round.create(user_query="continue this analysis", id="round-1")
+    round.add_post(Post.create(message="working", send_from="Planner", send_to="CodeInterpreter"))
+    round.change_round_state("failed")
+    memory.conversation.add_round(round)
+
+    memory.save_to_yaml(str(memory_path))
+
+    restored = Memory(session_id="session-1").from_yaml("session-1", str(memory_path))
+    assert restored.conversation.rounds[0].user_query == "continue this analysis"
+    assert restored.conversation.rounds[0].state == "failed"
+    assert restored.conversation.rounds[0].post_list[0].message == "working"
+    assert list(tmp_path.glob("*.tmp")) == []
+
+
 def test_memory_get_rounds():
     from taskweaver.memory import Memory, Post, Round
     from taskweaver.module.prompt_util import PromptUtil

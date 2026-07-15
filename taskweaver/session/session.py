@@ -153,6 +153,10 @@ class Session:
         self.round_index = len(self.memory.conversation.rounds)
         self.logger.info(f"Session {self.session_id} memory restored from {self.memory_path}")
 
+    def _save_memory(self) -> None:
+        """Checkpoint conversation state so the session can be reconstructed."""
+        self.memory.save_to_yaml(self.memory_path)
+
     @tracing_decorator
     def update_session_var(
         self,
@@ -177,6 +181,7 @@ class Session:
         message: str,
     ) -> Round:
         chat_round = self.memory.create_round(user_query=message)
+        self._save_memory()
 
         self.tracing.set_span_attribute("round_id", chat_round.id)
         self.tracing.set_span_attribute("round_index", self.round_index)
@@ -192,6 +197,7 @@ class Session:
             self.tracing.set_span_attribute("in.attachments", str(post.attachment_list))
 
             chat_round.add_post(post)
+            self._save_memory()
 
             if recipient == "Planner":
                 reply_post = self.planner.reply(
@@ -225,6 +231,7 @@ class Session:
                     self.internal_chat_num += 1
                     if post.send_to == "User":
                         chat_round.add_post(post)
+                        self._save_memory()
                         self.internal_chat_num = 0
                         break
                     if self.internal_chat_num >= self.max_internal_chat_round_num:
@@ -246,6 +253,7 @@ class Session:
                     if post.send_to == "Planner":
                         # add the original message to the chat round
                         chat_round.add_post(post)
+                        self._save_memory()
                         # create a reply post
                         reply_post = Post.create(
                             message=post.message,
@@ -253,6 +261,7 @@ class Session:
                             send_to="User",
                         )
                         chat_round.add_post(reply_post)
+                        self._save_memory()
                         break
                     else:
                         post = _send_message(worker_name, post)
@@ -277,7 +286,7 @@ class Session:
             self.tracing.set_span_attribute("internal_chat_num", self.internal_chat_num)
 
             self.internal_chat_num = 0
-            self.memory.save_to_yaml(self.memory_path)
+            self._save_memory()
             self.logger.dump_log_file(
                 chat_round,
                 file_path=os.path.join(

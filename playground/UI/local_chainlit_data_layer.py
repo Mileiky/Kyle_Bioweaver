@@ -1,8 +1,9 @@
 import json
 import os
 import shutil
+import tempfile
 from datetime import datetime
-from typing import Any, Dict, List, Optional
+from typing import Any, Awaitable, Callable, Dict, List, Optional
 
 from chainlit.context import context
 from chainlit.data import BaseDataLayer, queue_until_user_message
@@ -11,9 +12,14 @@ from chainlit.user import PersistedUser, User
 
 
 class LocalChainlitDataLayer(BaseDataLayer):
-    def __init__(self, base_path: str) -> None:
+    def __init__(
+        self,
+        base_path: str,
+        on_thread_deleted: Optional[Callable[[str], Awaitable[None]]] = None,
+    ) -> None:
         self.base_path = base_path
         self.users_path = os.path.join(base_path, "users")
+        self.on_thread_deleted = on_thread_deleted
         os.makedirs(self.users_path, exist_ok=True)
 
     def _now(self) -> str:
@@ -27,8 +33,20 @@ class LocalChainlitDataLayer(BaseDataLayer):
 
     def _write_json(self, path: str, value: Any) -> None:
         os.makedirs(os.path.dirname(path), exist_ok=True)
-        with open(path, "w") as f:
-            json.dump(value, f)
+        fd, temp_path = tempfile.mkstemp(
+            dir=os.path.dirname(path),
+            prefix=f".{os.path.basename(path)}.",
+            suffix=".tmp",
+        )
+        try:
+            with os.fdopen(fd, "w") as f:
+                json.dump(value, f)
+                f.flush()
+                os.fsync(f.fileno())
+            os.replace(temp_path, path)
+        finally:
+            if os.path.exists(temp_path):
+                os.unlink(temp_path)
 
     def _user_dir(self, user_id: str) -> str:
         return os.path.join(self.users_path, user_id)
@@ -57,6 +75,10 @@ class LocalChainlitDataLayer(BaseDataLayer):
             if os.path.exists(candidate):
                 return user_id
         return None
+
+    def get_thread_owner_id(self, thread_id: str) -> Optional[str]:
+        """Return the persisted owner for access-control checks."""
+        return self._find_thread_owner(thread_id)
 
     def _load_thread(self, user_id: str, thread_id: str) -> Optional[Dict[str, Any]]:
         return self._read_json(self._thread_path(user_id, thread_id))
@@ -195,6 +217,15 @@ class LocalChainlitDataLayer(BaseDataLayer):
         user_id = self._find_thread_owner(thread_id)
         if user_id is None:
             return
+
+        current_user = getattr(context.session, "user", None)
+        current_user_id = getattr(current_user, "identifier", None)
+        if current_user_id is not None and current_user_id != user_id:
+            raise PermissionError(f"Thread {thread_id} does not belong to the current user")
+
+        if self.on_thread_deleted is not None:
+            await self.on_thread_deleted(thread_id)
+
         thread_dir = self._thread_dir(user_id, thread_id)
         if os.path.exists(thread_dir):
             shutil.rmtree(thread_dir)
@@ -255,6 +286,12 @@ class LocalChainlitDataLayer(BaseDataLayer):
         )
         return thread_dict
 
+    async def get_thread_for_user(self, thread_id: str, user_id: str) -> Optional[ThreadDict]:
+        """Return a thread only when it belongs to the requested user."""
+        if self._find_thread_owner(thread_id) != user_id:
+            return None
+        return await self.get_thread(thread_id)
+
     async def update_thread(
         self,
         thread_id: str,
@@ -266,6 +303,10 @@ class LocalChainlitDataLayer(BaseDataLayer):
         owner_id = user_id or self._find_thread_owner(thread_id)
         if owner_id is None:
             owner_id = context.session.user.identifier
+
+        existing_owner = self._find_thread_owner(thread_id)
+        if existing_owner is not None and existing_owner != owner_id:
+            raise PermissionError(f"Thread {thread_id} belongs to another user")
 
         existing = self._load_thread(owner_id, thread_id) or {}
         item = {
