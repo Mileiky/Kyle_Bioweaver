@@ -110,52 +110,28 @@ def concat_rule(
     sample_ids: List[str],
     sample_key: str = "sample",
     multi_sample_join: str = "inner",
-    min_cells: int = 3,
-    source_stage: str = "qc",
-    preview: bool = False,
 ):
-    """Concatenate ordered sample branches and optionally filter genes globally."""
+    """Concatenate non-empty sample branches in their declared order."""
     parent_ids = list(parent_id) if not isinstance(parent_id, str) else [parent_id]
     if len(parent_ids) != len(sample_ids):
         raise ValueError("concat requires one ordered parent for each sample_id.")
-    if multi_sample_join not in {"inner", "outer"}:
-        raise ValueError("multi_sample_join must be 'inner' or 'outer'.")
+    if len(sample_ids) != len(set(sample_ids)):
+        raise ValueError("concat requires unique sample_ids.")
 
     adatas = {}
-    input_shapes = {}
     for node_id, sample_id in zip(parent_ids, sample_ids):
-        adata = mgr.get_object(node_id).copy()
+        adata = mgr.get_object(node_id)
         if adata.n_obs == 0:
             raise ValueError(f"Sample '{sample_id}' has no cells available for concatenation.")
-        adata.var_names_make_unique()
-        adata.obs[sample_key] = sample_id
         adatas[sample_id] = adata
-        input_shapes[sample_id] = [adata.n_obs, adata.n_vars]
 
     combined = sc.concat(
         adatas,
         label=sample_key,
         index_unique="-",
         join=multi_sample_join,
-        merge="same",
-        fill_value=0 if multi_sample_join == "outer" else None,
     )
-    if not preview:
-        sc.pp.filter_genes(combined, min_cells=min_cells)
-    if combined.n_obs == 0 or combined.n_vars == 0:
-        raise ValueError("Concatenation and gene filtering produced an empty dataset.")
-
-    combined.uns["multi_sample"] = {
-        "sample_key": sample_key,
-        "sample_ids": list(sample_ids),
-        "join": multi_sample_join,
-        "source_stage": source_stage,
-        "preview": preview,
-        "min_cells": None if preview else min_cells,
-        "input_shapes": input_shapes,
-    }
-    result_key = f"concat_preview_{source_stage}" if preview else "concat"
-    return combined, "new_object", result_key
+    return combined, "new_object", "concat"
 
 
 def normalize_rule(mgr: Any, parent_id: str, target_sum: float = 1e4):

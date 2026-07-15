@@ -108,6 +108,8 @@ class SingleCellPipelineRunner:
             raise ValueError("data_paths requires at least two inputs; use data_path for one sample.")
         if target_stage == "concat" and not is_multi_sample:
             raise ValueError("target_stage='concat' requires at least two data_paths.")
+        if multi_sample_join not in {"inner", "outer"}:
+            raise ValueError("multi_sample_join must be 'inner' or 'outer'.")
         if sample_overrides and not is_multi_sample:
             raise ValueError("sample_overrides is only supported with data_paths.")
         self.validate_sample_overrides(sample_overrides, sample_ids or [])
@@ -323,7 +325,7 @@ class SingleCellPipelineRunner:
             for path, sample_id in zip(data_paths, sample_ids)
         ]
         if request.target_stage == "raw":
-            return self.run_concat(raw_nodes, params, source_stage="raw", preview=True)
+            return self.run_concat(raw_nodes, params)
 
         scrublet_nodes = []
         for node_id, sample_id in zip(raw_nodes, sample_ids):
@@ -332,19 +334,15 @@ class SingleCellPipelineRunner:
                 self.run_rule("scrublet", node_id, effective_params=params, **branch_params)
             )
         if request.target_stage == "scrublet":
-            return self.run_concat(scrublet_nodes, params, source_stage="scrublet", preview=True)
+            return self.run_concat(scrublet_nodes, params)
 
         qc_nodes = []
         for node_id, sample_id in zip(scrublet_nodes, sample_ids):
             branch_params = self.sample_stage_params(params, sample_id)
-            branch_params.pop("min_cells", None)
-            branch_params["_filter_genes"] = False
             qc_node = self.run_rule("qc", node_id, effective_params=params, **branch_params)
-            if self.manager.get_object(qc_node).n_obs == 0:
-                raise ValueError(f"Sample '{sample_id}' has no cells after QC.")
             qc_nodes.append(qc_node)
 
-        concat_node = self.run_concat(qc_nodes, params, source_stage="qc", preview=False)
+        concat_node = self.run_concat(qc_nodes, params)
         if request.target_stage in {"qc", "concat"}:
             return concat_node
 
@@ -403,19 +401,13 @@ class SingleCellPipelineRunner:
         self,
         parent_ids: list[str],
         params: Dict[str, Any],
-        source_stage: str,
-        preview: bool,
     ) -> str:
-        """Create a preview or canonical multi-parent concat node."""
+        """Create a multi-parent concat node."""
         concat_params = {
             "sample_ids": params["sample_ids"],
             "sample_key": params["sample_key"],
             "multi_sample_join": params["multi_sample_join"],
-            "source_stage": source_stage,
-            "preview": preview,
         }
-        if not preview:
-            concat_params["min_cells"] = params["min_cells"]
         return self.run_rule(
             "concat",
             parent_ids,

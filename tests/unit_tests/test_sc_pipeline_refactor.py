@@ -365,13 +365,11 @@ def test_multi_sample_loading_and_runner_reuse(tmp_path):
 
         assert adata.n_obs == 60
         assert set(adata.obs["sample"].astype(str)) == {"sample_a", "sample_b"}
-        assert adata.uns["multi_sample"]["sample_ids"] == ["sample_a", "sample_b"]
         assert "Stage 'raw' complete." in summary
-        preview_node = runner.manager.active_node_id
-        assert runner.manager.graph.nodes[preview_node]["action"] == "concat"
-        assert runner.manager.graph.nodes[preview_node]["params"]["preview"] is True
-        preview_parents = runner.manager.parent_ids(preview_node)
-        assert [runner.manager.graph.nodes[item]["action"] for item in preview_parents] == ["raw", "raw"]
+        concat_node = runner.manager.active_node_id
+        assert runner.manager.graph.nodes[concat_node]["action"] == "concat"
+        parents = runner.manager.parent_ids(concat_node)
+        assert [runner.manager.graph.nodes[item]["action"] for item in parents] == ["raw", "raw"]
 
 
 def test_manager_persists_ordered_multiple_parents(tmp_path):
@@ -417,11 +415,11 @@ def test_manager_persists_ordered_multiple_parents(tmp_path):
     assert forward_hash != reverse_hash
 
 
-def test_concat_filters_genes_after_combining_samples():
+def test_concat_preserves_genes_and_does_not_mutate_samples():
     obs = pd.DataFrame(index=[f"cell_{idx}" for idx in range(4)])
     var = pd.DataFrame(index=["common", "rare"])
-    sample_a = AnnData(X=np.array([[1, 1], [1, 1], [1, 0], [1, 0]]), obs=obs.copy(), var=var.copy())
-    sample_b = AnnData(X=np.array([[1, 1], [1, 1], [1, 0], [1, 0]]), obs=obs.copy(), var=var.copy())
+    sample_a = AnnData(X=np.array([[1, 1], [1, 0], [1, 0], [1, 0]]), obs=obs.copy(), var=var.copy())
+    sample_b = AnnData(X=np.array([[1, 0], [1, 0], [1, 0], [1, 0]]), obs=obs.copy(), var=var.copy())
     manager = MagicMock()
     manager.get_object.side_effect = lambda node_id: {"a": sample_a, "b": sample_b}[node_id]
 
@@ -429,7 +427,6 @@ def test_concat_filters_genes_after_combining_samples():
         manager,
         ["a", "b"],
         sample_ids=["a", "b"],
-        min_cells=3,
     )
 
     assert combined.shape == (8, 2)
@@ -439,6 +436,20 @@ def test_concat_filters_genes_after_combining_samples():
     assert result_key == "concat"
     assert "sample" not in sample_a.obs
     assert "sample" not in sample_b.obs
+
+
+def test_concat_validates_parent_mapping_and_non_empty_samples():
+    sample = _make_test_adata()
+    empty_sample = sample[:0].copy()
+    manager = MagicMock()
+    manager.get_object.side_effect = lambda node_id: {"full": sample, "empty": empty_sample}[node_id]
+
+    with pytest.raises(ValueError, match="one ordered parent"):
+        concat_rule(manager, ["full"], sample_ids=["a", "b"])
+    with pytest.raises(ValueError, match="unique sample_ids"):
+        concat_rule(manager, ["full", "full"], sample_ids=["a", "a"])
+    with pytest.raises(ValueError, match="Sample 'b' has no cells"):
+        concat_rule(manager, ["full", "empty"], sample_ids=["a", "b"])
 
 
 def test_multi_sample_branches_merge_after_qc_and_reuse_unaffected_sample(tmp_path):
